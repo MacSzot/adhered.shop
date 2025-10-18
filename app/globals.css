@@ -1,0 +1,27 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #0a0a0a;
+  color: #f2f2f2;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+}
+.prompter-container { display: flex; flex-direction: column; padding: 16px; gap: 16px; }
+.header { display: flex; justify-content: space-between; align-items: center; }
+.title { font-size: 18px; font-weight: 600; }
+.timer { font-weight: 700; font-size: 16px; }
+.grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 800px) { .grid { grid-template-columns: 1fr 1fr; } }
+.video-box { background: #000; border-radius: 12px; overflow: hidden; border: 1px solid #222; }
+.video { width: 100%; height: auto; }
+.text-box {
+  background: #111; border: 1px solid #222; border-radius: 12px;
+  padding: 16px; height: 60vh; overflow-y: auto;
+  line-height: 1.6; font-size: 1rem; white-space: pre-wrap;
+}
+.controls { display: flex; gap: 8px; margin-top: 8px; }
+button {
+  background: #1f1f1f; color: #fff; border: 1px solid #333;
+  border-radius: 8px; padding: 10px 16px; cursor: pointer; font-size: 14px;
+  transition: background 0.2s ease;
+}
+button:hover { background: #333; }
