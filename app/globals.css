@@ -1,7 +1,6 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  background: #0a0a0a;
-  color: #f2f2f2;
+  background: #0a0a0a; color: #f2f2f2;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   min-height: 100vh;
 }
