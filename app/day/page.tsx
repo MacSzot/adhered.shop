@@ -8,7 +8,7 @@ export default function PrompterPage() {
   const [text, setText] = useState<string>("Ładowanie tekstu...");
   const [isRunning, setIsRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<number | null>(null); // przeglądarka: number
 
   const MAX_TIME = 6 * 60; // 6 minut
 
@@ -25,9 +25,7 @@ export default function PrompterPage() {
         video: true,
         audio: true,
       });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
+      if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
       alert("Zezwól na dostęp do kamery i mikrofonu.");
       console.error(err);
@@ -37,28 +35,28 @@ export default function PrompterPage() {
   const startSession = () => {
     setIsRunning(true);
     startCamera();
-    timerRef.current = setInterval(() => {
+    timerRef.current = window.setInterval(() => {
       setElapsed((prev) => prev + 1);
     }, 1000);
   };
 
   const stopSession = () => {
     setIsRunning(false);
-    if (timerRef.current) clearInterval(timerRef.current);
-    const stream = videoRef.current?.srcObject as MediaStream;
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-    }
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    const stream = videoRef.current?.srcObject as MediaStream | undefined;
+    stream?.getTracks().forEach((t) => t.stop());
   };
 
+  // auto-scroll
   useEffect(() => {
     if (!isRunning || !textRef.current) return;
-    const interval = setInterval(() => {
+    const id = window.setInterval(() => {
       if (textRef.current) textRef.current.scrollTop += 1;
     }, 50);
-    return () => clearInterval(interval);
+    return () => window.clearInterval(id);
   }, [isRunning]);
 
+  // auto-stop po 6 minutach
   useEffect(() => {
     if (elapsed >= MAX_TIME && isRunning) {
       stopSession();
@@ -66,17 +64,17 @@ export default function PrompterPage() {
     }
   }, [elapsed, isRunning]);
 
-  const formatTime = (sec: number) => {
-    const m = Math.floor(sec / 60).toString().padStart(2, "0");
-    const s = (sec % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60).toString().padStart(2, "0");
+    const ss = (s % 60).toString().padStart(2, "0");
+    return `${m}:${ss}`;
   };
 
   return (
     <main className="prompter-container">
       <header className="header">
         <h1 className="title">adhered • Prompter</h1>
-        <div className="timer">{isRunning ? formatTime(elapsed) : "00:00"}</div>
+        <div className="timer">{isRunning ? fmt(elapsed) : "00:00"}</div>
       </header>
 
       <div className="grid">
