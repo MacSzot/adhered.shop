@@ -7,13 +7,21 @@ export default function PrompterPage() {
   const [text, setText] = useState("Ładowanie tekstu…");
   const [isRunning, setIsRunning] = useState(false);
 
+  // --- USTAWIENIA / placeholdery (później podmienimy z tokena / query) ---
+  const USER_NAME = "demo";
+  const DAY_LABEL = "Dzień 1";
   const MAX_TIME = 6 * 60; // 6 minut
+  const MIC_GAIN = 320; // ↑ czułość mikrofonu (im wyżej, tym żywiej)
+
+  // --- czas ---
   const [remaining, setRemaining] = useState(MAX_TIME);
   const timerRef = useRef<number | null>(null);
+
+  // --- mirror ---
   const [mirror, setMirror] = useState(true);
 
-  // mikrofon
-  const [level, setLevel] = useState(0);
+  // --- mikrofon (VU) ---
+  const [levelPct, setLevelPct] = useState(0); // 0..100%
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafMeterRef = useRef<number | null>(null);
@@ -27,24 +35,31 @@ export default function PrompterPage() {
   }, []);
 
   const setupAudioMeter = (stream: MediaStream) => {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+    const ctx = new Ctx();
     const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
+    analyser.fftSize = 1024;
     const source = ctx.createMediaStreamSource(stream);
     source.connect(analyser);
+
     audioCtxRef.current = ctx;
     analyserRef.current = analyser;
 
     const data = new Uint8Array(analyser.fftSize);
     const tick = () => {
       analyser.getByteTimeDomainData(data);
-      let sum = 0;
+
+      // Peak z ostatniej ramki (bardziej "żywy" niż RMS)
+      let peak = 0;
       for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128;
-        sum += v * v;
+        const v = Math.abs((data[i] - 128) / 128); // 0..1
+        if (v > peak) peak = v;
       }
-      const rms = Math.sqrt(sum / data.length);
-      setLevel((prev) => Math.max(rms, prev * 0.8));
+
+      // wzmocnienie + lekkie wygładzenie
+      const target = Math.min(100, peak * MIC_GAIN);
+      setLevelPct((prev) => Math.max(target, prev * 0.85));
+
       rafMeterRef.current = requestAnimationFrame(tick);
     };
     rafMeterRef.current = requestAnimationFrame(tick);
@@ -52,10 +67,7 @@ export default function PrompterPage() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       mediaStreamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
       setupAudioMeter(stream);
@@ -88,7 +100,7 @@ export default function PrompterPage() {
     audioCtxRef.current?.close().catch(() => {});
     audioCtxRef.current = null;
     analyserRef.current = null;
-    setLevel(0);
+    setLevelPct(0);
   };
 
   const fmt = (s: number) =>
@@ -96,15 +108,37 @@ export default function PrompterPage() {
 
   return (
     <main className="prompter-full">
+      {/* GÓRNY PANEL (zakładki + user/day + sterowanie) */}
+      <header className="topbar">
+        <nav className="tabs">
+          <a className="tab active" href="/day" aria-current="page">Prompter</a>
+          <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
+        </nav>
+
+        <div className="top-info">
+          <span className="meta"><b>Użytkownik:</b> {USER_NAME}</span>
+          <span className="meta"><b>Dzień programu:</b> {DAY_LABEL}</span>
+        </div>
+
+        <div className="controls-top">
+          {!isRunning ? (
+            <button className="btn" onClick={startSession}>Start</button>
+          ) : (
+            <button className="btn" onClick={stopSession}>Stop</button>
+          )}
+          <button className="btn ghost" onClick={() => setMirror((m) => !m)}>
+            {mirror ? "Mirror: ON" : "Mirror: OFF"}
+          </button>
+        </div>
+      </header>
+
+      {/* TIMER NA SAMEJ GÓRZE OBRAZU (na kamerze) */}
+      <div className="timer-top">{fmt(remaining)}</div>
+
+      {/* KAMERA + overlay z tekstem */}
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
-
-        {/* overlay z tekstem i licznikiem */}
-        <div className="overlay">
-          {/* licznik czasu */}
-          <div className="big-timer">{fmt(remaining)}</div>
-
-          {/* tekst na środku */}
+        <div className="overlay center">
           <div className="center-text">
             {text.split("\n").map((line, i) => (
               <p key={i}>{line || " "}</p>
@@ -112,27 +146,13 @@ export default function PrompterPage() {
           </div>
         </div>
 
-        {/* pionowy mikrofon z boku */}
+        {/* VU-meter pionowy po prawej */}
         <div className="meter-vertical">
-          <div
-            className="meter-vertical-fill"
-            style={{ height: `${Math.min(100, level * 150)}%` }}
-          />
+          <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
         </div>
       </div>
-
-      {/* kontrolki */}
-      <footer className="controls">
-        {!isRunning ? (
-          <button onClick={startSession}>Start</button>
-        ) : (
-          <button onClick={stopSession}>Stop</button>
-        )}
-        <button onClick={() => setMirror((m) => !m)} className="ghost">
-          {mirror ? "Mirror: ON" : "Mirror: OFF"}
-        </button>
-      </footer>
     </main>
   );
 }
+
 
