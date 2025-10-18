@@ -1,26 +1,253 @@
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* ===============================
+   RESET I OGÓLNY STYL STRONY
+   =============================== */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
 body {
-  background: #0a0a0a; color: #f2f2f2;
+  background: #0a0a0a;
+  color: #f2f2f2;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   min-height: 100vh;
+  overflow-x: hidden;
 }
-.prompter-container { display: flex; flex-direction: column; padding: 16px; gap: 16px; }
-.header { display: flex; justify-content: space-between; align-items: center; }
-.title { font-size: 18px; font-weight: 600; }
-.timer { font-weight: 700; font-size: 16px; }
-.grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-@media (min-width: 800px) { .grid { grid-template-columns: 1fr 1fr; } }
-.video-box { background: #000; border-radius: 12px; overflow: hidden; border: 1px solid #222; }
-.video { width: 100%; height: auto; }
-.text-box {
-  background: #111; border: 1px solid #222; border-radius: 12px;
-  padding: 16px; height: 60vh; overflow-y: auto;
-  line-height: 1.6; font-size: 1rem; white-space: pre-wrap;
+
+/* ===============================
+   GŁÓWNA STRUKTURA
+   =============================== */
+
+.prompter-full {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #0a0a0a;
+  color: #f2f2f2;
 }
-.controls { display: flex; gap: 8px; margin-top: 8px; }
-button {
-  background: #1f1f1f; color: #fff; border: 1px solid #333;
-  border-radius: 8px; padding: 10px 16px; cursor: pointer; font-size: 14px;
+
+/* ===============================
+   GÓRNY PASEK (LOGO, TIMER, MIRROR)
+   =============================== */
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.topbar .left {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.topbar .right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.timer {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.timewrap {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-right: 8px;
+}
+
+.slash {
+  opacity: 0.6;
+}
+
+.ghost {
+  background: transparent;
+  border: 1px solid #333;
+  color: #ddd;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ghost:hover {
+  background: #1b1b1b;
+}
+
+/* ===============================
+   PASEK POSTĘPU (CZYTNIK CZASU)
+   =============================== */
+
+.timebar {
+  height: 6px;
+  background: #1a1a1a;
+  border: 1px solid #222;
+  border-radius: 999px;
+  margin: 0 12px 8px;
+  overflow: hidden;
+}
+
+.timebar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #79f, #9ff);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+/* ===============================
+   SCENA: KAMERA + OVERLAY
+   =============================== */
+
+.stage {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  aspect-ratio: 16/9;
+  background: #000;
+  border: 1px solid #222;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.cam {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mirrored .cam {
+  transform: scaleX(-1);
+}
+
+/* ===============================
+   OVERLAY TEKSTOWY (PROMPTER)
+   =============================== */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  padding: 8vh 5vw 8vh 5vw;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.script {
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  font-size: clamp(22px, 4.5vw, 40px);
+  line-height: 1.5;
+  text-align: center;
+}
+
+.script p {
+  margin: 0 0 1.1em;
+}
+
+.mask {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14vh;
+  pointer-events: none;
+}
+
+.mask.top {
+  top: 0;
+  background: linear-gradient(to bottom, rgba(10, 10, 10, 0.9), rgba(10, 10, 10, 0));
+}
+
+.mask.bottom {
+  bottom: 0;
+  background: linear-gradient(to top, rgba(10, 10, 10, 0.9), rgba(10, 10, 10, 0));
+}
+
+/* ===============================
+   WSKAŹNIK GŁOŚNOŚCI (VU-METER)
+   =============================== */
+
+.meter {
+  height: 10px;
+  background: #151515;
+  border: 1px solid #272727;
+  border-radius: 999px;
+  margin: 10px 12px 0;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4df, #7f7, #ff5);
+  border-radius: 999px;
+  width: 0%;
+  transition: width 0.1s linear;
+}
+
+/* ===============================
+   PANEL STEROWANIA (STOP/START)
+   =============================== */
+
+.controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px 20px;
+}
+
+.controls button {
+  background: #1f1f1f;
+  color: #fff;
+  border: 1px solid #333;
+  border-radius: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 14px;
   transition: background 0.2s ease;
 }
-button:hover { background: #333; }
+
+.controls button:hover {
+  background: #333;
+}
+
+.speed {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: 12px;
+}
+
+.speed input {
+  accent-color: #7fd;
+  cursor: pointer;
+}
+
+/* ===============================
+   RESPONSYWNOŚĆ
+   =============================== */
+
+@media (max-width: 600px) {
+  .script {
+    font-size: clamp(18px, 5vw, 32px);
+  }
+  .controls {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
