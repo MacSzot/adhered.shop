@@ -1,11 +1,9 @@
-/* Reset */
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
 
-/* Layout */
 .prompter-full{position:relative;height:100vh;width:100vw;background:#000;overflow:hidden}
 
-/* TOPBAR – powiększony i zbity */
+/* Topbar – większy, zbity */
 .topbar{
   position:fixed;top:0;left:0;right:0;z-index:40;
   display:flex;align-items:center;justify-content:space-between;
@@ -36,10 +34,10 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
 }
 .btn:hover{background:#333}
 
-/* TIMER – bardzo czytelny, pod topbarem */
+/* Timer – mocny i widoczny pod topbarem */
 .timer-top{
   position:fixed;
-  top:calc(60px + env(safe-area-inset-top, 0px)); /* miejsce pod topbar */
+  top:calc(60px + env(safe-area-inset-top, 0px));
   left:50%;transform:translateX(-50%);
   z-index:35;
   font-weight:800;letter-spacing:.5px;
@@ -52,13 +50,18 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
     0 0 2px rgba(0,0,0,1);
 }
 
-/* Kamera fullscreen */
+/* Kamera */
 .stage{position:fixed;inset:0;width:100%;height:100%;background:#000;overflow:hidden;z-index:1}
 .cam{width:100%;height:100%;object-fit:cover}
 .mirrored .cam{transform:scaleX(-1)}
 
-/* Tekst w środku */
+/* Intro */
 .overlay.center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:5}
+.intro{text-align:center;max-width:86%;color:rgba(255,255,255,.9);text-shadow:0 0 14px rgba(0,0,0,.9)}
+.intro h2{font-size:clamp(22px,3.2vw,32px);margin-bottom:10px;font-weight:800}
+.intro p{font-size:clamp(14px,2vw,18px);opacity:.9}
+
+/* Tekst sesji */
 .center-text{
   text-align:center;max-width:84%;
   font-size:clamp(16px,2.2vw,28px);line-height:1.35;
@@ -68,24 +71,7 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
 .fade{animation:fadeIn .5s ease both}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
-/* Intro przed startem */
-.intro{
-  pointer-events:none;
-  text-align:center;
-  max-width:86%;
-  color:rgba(255,255,255,.9);
-  text-shadow:0 0 14px rgba(0,0,0,.9);
-}
-.intro h2{
-  font-size:clamp(22px,3.2vw,32px);
-  margin-bottom:10px;font-weight:800
-}
-.intro p{
-  font-size:clamp(14px,2vw,18px);
-  opacity:.9
-}
-
-/* VU-meter pionowy */
+/* VU-meter */
 .meter-vertical{
   position:absolute;right:18px;top:18%;
   width:10px;height:64%;
@@ -98,7 +84,7 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
   border-radius:999px;transition:height .08s linear
 }
 
-/* Responsive */
+/* Mobile drobiazgi */
 @media (max-width:640px){
   .tab{font-size:13px;padding:7px 11px}
   .meta{font-size:13px}
@@ -106,4 +92,5 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
   .meter-vertical{right:10px;width:8px}
   .center-text{max-width:90%}
 }
+
 
