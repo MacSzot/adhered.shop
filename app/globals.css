@@ -5,7 +5,7 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
 /* Layout */
 .prompter-full{position:relative;height:100vh;width:100vw;background:#000;overflow:hidden}
 
-/* TOPBAR (tabs + user/day + sterowanie) */
+/* TOPBAR */
 .topbar{
   position:fixed;top:0;left:0;right:0;z-index:40;
   display:flex;align-items:center;justify-content:space-between;
@@ -14,31 +14,26 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
   padding-top:calc(8px + env(safe-area-inset-top, 0px));
   border-bottom:1px solid rgba(255,255,255,.07);
 }
-
 .tabs{display:flex;gap:8px;align-items:center}
-.tab{
-  padding:6px 10px;border-radius:999px;border:1px solid #333;color:#ddd;text-decoration:none;font-size:13px
-}
+.tab{padding:6px 10px;border-radius:999px;border:1px solid #333;color:#ddd;text-decoration:none;font-size:13px}
 .tab.active{background:#1c1c1c;border-color:#444;color:#fff}
 .tab.disabled{opacity:.45;cursor:not-allowed}
-
 .top-info{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .meta{font-size:13px;opacity:.9}
-
 .controls-top{display:flex;gap:8px;align-items:center}
-.btn{
-  background:#1f1f1f;border:1px solid #333;color:#fff;border-radius:8px;
-  padding:8px 12px;font-size:13px;cursor:pointer
-}
+.btn{background:#1f1f1f;border:1px solid #333;color:#fff;border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer}
 .btn:hover{background:#333}
-.btn.ghost{background:transparent}
 
-/* TIMER NA SAMEJ GÓRZE OBRAZU (na kamerze) */
+/* TIMER – na samej górze obrazu; bardzo czytelny */
 .timer-top{
   position:fixed;top:calc(46px + env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);
   z-index:35;
-  font-size:clamp(24px,3.5vw,48px);font-weight:700;
-  color:rgba(255,255,255,.8);text-shadow:0 0 16px rgba(0,0,0,.65);
+  font-size:clamp(28px,4vw,52px);font-weight:800;letter-spacing:.5px;
+  color:#fff;opacity:.98;
+  text-shadow:
+    0 0 22px rgba(0,0,0,.9),
+    0 0 50px rgba(0,0,0,.65),
+    0 0 2px rgba(0,0,0,1);
 }
 
 /* Kamera fullscreen */
@@ -46,14 +41,16 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
 .cam{width:100%;height:100%;object-fit:cover}
 .mirrored .cam{transform:scaleX(-1)}
 
-/* Tekst w środku (subtelny) */
+/* Tekst – jedno zdanie na środku, subtelny; animowany fade */
 .overlay.center{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:5}
 .center-text{
-  text-align:center;max-width:80%;
-  font-size:clamp(14px,2vw,24px);line-height:1.4;
-  color:rgba(255,255,255,.55);text-shadow:0 0 10px rgba(0,0,0,.8)
+  text-align:center;max-width:84%;
+  font-size:clamp(16px,2.2vw,28px);line-height:1.35;
+  color:rgba(255,255,255,.62);
+  text-shadow:0 0 12px rgba(0,0,0,.85);
 }
-.center-text p{margin:0 0 1em}
+.fade{animation:fadeIn .5s ease both}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* VU-meter pionowy */
 .meter-vertical{
@@ -73,6 +70,6 @@ html,body{height:100%;width:100%;background:#000;color:#f2f2f2;font-family:syste
   .meta{font-size:12px}
   .btn{padding:7px 10px}
   .meter-vertical{right:10px;width:8px}
-  .center-text{max-width:86%}
+  .center-text{max-width:90%}
 }
 
