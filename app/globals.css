@@ -45,25 +45,27 @@ html,body{
 .btn:hover{background:#333}
 
 /* --- TIMER --- */
-.timer-top {
+.timer-top{
   position: fixed;
-  top: 70px; /* przeniesiony niżej pod topbar */
+  /* zawsze tuż pod panelem: */
+  top: calc(var(--topbar-h, 64px) + 8px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10; /* mniejszy niż topbar, więc będzie POD nim */
+  z-index: 10; /* niższy niż topbar (ten ma ~40) */
   font-weight: 800;
   letter-spacing: .5px;
 }
 
-.timer-top--strong {
+.timer-top--strong{
   font-size: clamp(30px, 4.4vw, 56px);
   color: #fff;
   opacity: .95;
   text-shadow:
-    0 0 24px rgba(0, 0, 0, .9),
-    0 0 40px rgba(0, 0, 0, .5),
-    0 0 2px rgba(0, 0, 0, 1);
+    0 0 24px rgba(0,0,0,.9),
+    0 0 40px rgba(0,0,0,.5),
+    0 0 2px rgba(0,0,0,1);
 }
+
 
 
 /* --- KAMERA --- */
