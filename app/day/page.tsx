@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 // dzielenie tekstu: po liniach lub po .?!
 function splitIntoSentences(input: string): string[] {
@@ -10,7 +10,6 @@ function splitIntoSentences(input: string): string[] {
   return raw.split(/(?<=[\.\?\!])\s+/g).map(s => s.trim()).filter(Boolean);
 }
 
-// pobierz parametr z URL (np. ?day=03)
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
@@ -19,12 +18,14 @@ function getParam(name: string, fallback: string) {
 
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const topbarRef = useRef<HTMLElement | null>(null);
 
   // --- USTAWIENIA ---
   const USER_NAME = "demo";
-  const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? (getParam("day","01")) : "01");
-  const MAX_TIME = 6 * 60;           // 6 minut
-  const SENTENCE_INTERVAL_MS = 5000; // zmiana zdania co 5 s
+  const dayParam = typeof window !== "undefined" ? getParam("day", "01") : "01";
+  const DAY_LABEL = "Dzień " + dayParam;
+  const MAX_TIME = 6 * 60;
+  const SENTENCE_INTERVAL_MS = 5000;
 
   // --- STANY ---
   const [isRunning, setIsRunning] = useState(false);
@@ -38,9 +39,9 @@ export default function PrompterPage() {
   const timerRef = useRef<number | null>(null);
   const sentenceRef = useRef<number | null>(null);
 
-  // wczytanie treści dnia z /public/days/XX.txt
+  // 1) Wczytaj treść dnia
   useEffect(() => {
-    const day = getParam("day", "01"); // np. 01, 02, ..., 11
+    const day = getParam("day", "01");
     fetch(`/days/${day}.txt`)
       .then(r => {
         if (!r.ok) throw new Error("Brak pliku dnia");
@@ -54,7 +55,28 @@ export default function PrompterPage() {
       .catch(() => setSentences(["Brak treści dla tego dnia."]));
   }, []);
 
-  // VU-meter (tylko wizualizacja)
+  // 2) POMIAR TOPBARA → CSS var(--topbar-h)
+  useLayoutEffect(() => {
+    const setVar = () => {
+      const h = topbarRef.current?.offsetHeight ?? 64;
+      document.documentElement.style.setProperty("--topbar-h", `${h}px`);
+    };
+    setVar();
+
+    // reaguj na zmiany rozmiaru / orientacji (iOS!)
+    window.addEventListener("resize", setVar);
+    window.addEventListener("orientationchange", setVar);
+    // małe opóźnienie po starcie (iOS potrafi przeliczać layout po chwili)
+    const t = window.setTimeout(setVar, 100);
+
+    return () => {
+      window.removeEventListener("resize", setVar);
+      window.removeEventListener("orientationchange", setVar);
+      window.clearTimeout(t);
+    };
+  }, []);
+
+  // 3) VU-meter (tylko wizualizacja)
   useEffect(() => {
     if (!isRunning) return;
 
@@ -103,7 +125,7 @@ export default function PrompterPage() {
     };
   }, [isRunning]);
 
-  // start/stop
+  // 4) Start/Stop
   const clearAll = () => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     if (sentenceRef.current) window.clearInterval(sentenceRef.current);
@@ -138,8 +160,8 @@ export default function PrompterPage() {
 
   return (
     <main className="prompter-full">
-      {/* Topbar (większy, zbity) */}
-      <header className="topbar topbar--dense">
+      {/* TOPBAR z ref do pomiaru wysokości */}
+      <header ref={topbarRef} className="topbar topbar--dense">
         <nav className="tabs">
           <a className="tab active" href="/day" aria-current="page">Prompter</a>
           <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
@@ -160,14 +182,14 @@ export default function PrompterPage() {
         </div>
       </header>
 
-      {/* Timer pod panelem */}
+      {/* TIMER – zawsze poniżej topbara, wg var(--topbar-h) */}
       <div className="timer-top timer-top--strong">{fmt(remaining)}</div>
 
-      {/* Kamera + overlay */}
+      {/* KAMERA + overlay */}
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
-        {/* Intro przed startem */}
+        {/* Intro */}
         {!isRunning && (
           <div className="overlay center">
             <div className="intro">
@@ -180,7 +202,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* Tekst podczas sesji */}
+        {/* Tekst */}
         {isRunning && (
           <div className="overlay center">
             <div key={idx} className="center-text fade">
@@ -189,7 +211,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* pionowy VU-meter */}
+        {/* VU-meter */}
         <div className="meter-vertical">
           <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
         </div>
@@ -197,5 +219,6 @@ export default function PrompterPage() {
     </main>
   );
 }
+
 
 
