@@ -45,23 +45,26 @@ html,body{
 .btn:hover{background:#333}
 
 /* --- TIMER --- */
-.timer-top{
-  position:fixed;
-  top:calc(10px + env(safe-area-inset-top, 0px));
-  left:50%;
-  transform:translateX(-50%);
-  z-index:50;
-  font-weight:800;letter-spacing:.5px;
+.timer-top {
+  position: fixed;
+  top: 70px; /* przeniesiony niżej pod topbar */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10; /* mniejszy niż topbar, więc będzie POD nim */
+  font-weight: 800;
+  letter-spacing: .5px;
 }
-.timer-top--strong{
-  font-size:clamp(30px,4.4vw,56px);
-  color:#fff;
-  opacity:.98;
+
+.timer-top--strong {
+  font-size: clamp(30px, 4.4vw, 56px);
+  color: #fff;
+  opacity: .95;
   text-shadow:
-    0 0 24px rgba(0,0,0,.95),
-    0 0 60px rgba(0,0,0,.65),
-    0 0 2px rgba(0,0,0,1);
+    0 0 24px rgba(0, 0, 0, .9),
+    0 0 40px rgba(0, 0, 0, .5),
+    0 0 2px rgba(0, 0, 0, 1);
 }
+
 
 /* --- KAMERA --- */
 .stage{
