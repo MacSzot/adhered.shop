@@ -2,11 +2,25 @@
 
 import React, { useEffect, useRef, useState } from "react";
 
-// Jeśli chcesz na start wyłączyć dostęp do kamery/mikrofonu, zmień na false:
-const ENABLE_MEDIA = true;
+// ---------- USTAWIENIA ----------
+const USER_NAME = "demo";
+// 6 minut sesji; interwał zmiany zdania 5s
+const MAX_TIME = 6 * 60;
+const SENTENCE_INTERVAL_MS = 5000;
 
-// Jeżeli masz pliki w /public/days, ustaw np. "day3" lub podłącz to pod router/query:
-const DEFAULT_DAY = "day1";
+// ---------- POMOCNICZE ----------
+function splitIntoSentences(input: string): string[] {
+  const raw = input.replace(/\r/g, " ").replace(/\n+/g, "\n").trim();
+  const lines = raw.split("\n").map(s => s.trim()).filter(Boolean);
+  if (lines.length > 1) return lines;
+  return raw.split(/(?<=[\.\?\!])\s+/g).map(s => s.trim()).filter(Boolean);
+}
+
+function getParam(name: string, fallback: string) {
+  if (typeof window === "undefined") return fallback;
+  const v = new URLSearchParams(window.location.search).get(name);
+  return (v && v.trim()) || fallback;
+}
 
 async function loadDayText(day: string) {
   try {
@@ -19,175 +33,216 @@ async function loadDayText(day: string) {
   }
 }
 
-export default function DayPage() {
-  // --- TIMERS & RAF (w przeglądarce zwracają number) ---
-  const scrollIntervalRef = useRef<number | null>(null);
-  const clockIntervalRef = useRef<number | null>(null);
+// ---------- KOMPONENT ----------
+export default function PrompterPage() {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  const dayParam = typeof window !== "undefined" ? getParam("day", "01") : "01";
+  const DAY_LABEL = "Dzień " + dayParam;
+
+  // STANY
+  const [isRunning, setIsRunning] = useState(false);
+  const [remaining, setRemaining] = useState(MAX_TIME);
+  const [sentences, setSentences] = useState<string[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [levelPct, setLevelPct] = useState(0);
+  const [mirror] = useState(true);
+
+  // TIMERY (number w przeglądarce)
+  const timerRef = useRef<number | null>(null);
+  const sentenceRef = useRef<number | null>(null);
+
+  // AUDIO/MEDIA
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
 
-  // --- MEDIA ---
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-
-  // --- UI STATE ---
-  const [running, setRunning] = useState(false);
-  const [elapsed, setElapsed] = useState(0); // sekundy
-  const [dayText, setDayText] = useState<string>("(ładowanie…)");
-
-  // Ładowanie treści dnia po wejściu
+  // 1) Wczytaj treść dnia
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const text = await loadDayText(DEFAULT_DAY);
-      if (mounted) setDayText(text || "(brak treści dnia)");
-    })();
-    return () => {
-      mounted = false;
-    };
+    const day = getParam("day", "01");
+    loadDayText(day)
+      .then(text => setSentences(splitIntoSentences(text)))
+      .catch(() => setSentences([]));
   }, []);
 
-  const startSession = async () => {
-    if (typeof window === "undefined") return;
-    if (running) return;
+  // 2) Kamera + VU-meter (start/stop sesji)
+  useEffect(() => {
+    if (!isRunning) return;
 
-    setRunning(true);
-    setElapsed(0);
+    let analyser: AnalyserNode | null = null;
 
-    // MEDIA (opcjonalne)
-    if (ENABLE_MEDIA) {
+    const startMedia = async () => {
       try {
-        mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+
+        const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+        audioCtxRef.current = new Ctx();
+        analyser = audioCtxRef.current.createAnalyser();
+        analyser.fftSize = 1024;
+        audioCtxRef.current.createMediaStreamSource(stream).connect(analyser);
+
+        const data = new Uint8Array(analyser.fftSize);
+        const tick = () => {
+          analyser!.getByteTimeDomainData(data);
+          let peak = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = Math.abs((data[i] - 128) / 128);
+            if (v > peak) peak = v;
+          }
+          const target = Math.min(100, peak * 380);
+          setLevelPct(prev => Math.max(target, prev * 0.85));
+          rafRef.current = window.requestAnimationFrame(tick);
+        };
+        rafRef.current = window.requestAnimationFrame(tick);
       } catch (e) {
-        console.error("getUserMedia error", e);
+        console.error("getUserMedia/Audio error", e);
       }
-
-      if (!audioCtxRef.current) {
-        try {
-          audioCtxRef.current = new (window.AudioContext ||
-            (window as any).webkitAudioContext)();
-        } catch (e) {
-          console.error("AudioContext error", e);
-        }
-      }
-    }
-
-    // INTERWAŁY — konsekwentnie przez window.setInterval (typ: number)
-    // 1) Scroll/auto-advance (przykład, możesz zamienić na swoją logikę)
-    if (scrollIntervalRef.current === null) {
-      scrollIntervalRef.current = window.setInterval(() => {
-        // …Twoja logika przewijania/promptera…
-        // przykład: document.getElementById("reader")?.scrollBy({ top: 1 });
-      }, 50);
-    }
-
-    // 2) Zegar/odliczanie
-    if (clockIntervalRef.current === null) {
-      clockIntervalRef.current = window.setInterval(() => {
-        setElapsed((s) => s + 1);
-      }, 1000);
-    }
-
-    // 3) RAF (np. VU-meter/animacje)
-    const loop = () => {
-      // …opcjonalny pomiar audio/animacje…
-      rafRef.current = window.requestAnimationFrame(loop);
     };
-    if (rafRef.current === null) {
-      rafRef.current = window.requestAnimationFrame(loop);
+
+    startMedia();
+
+    return () => {
+      // RAF
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      // MEDIA
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+      // AUDIO
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
+    };
+  }, [isRunning]);
+
+  // 3) Start/Stop
+  const clearAll = () => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (sentenceRef.current !== null) {
+      window.clearInterval(sentenceRef.current);
+      sentenceRef.current = null;
     }
   };
 
-  const clearAll = () => {
-    // Interwały
-    if (scrollIntervalRef.current !== null) {
-      window.clearInterval(scrollIntervalRef.current);
-      scrollIntervalRef.current = null;
-    }
-    if (clockIntervalRef.current !== null) {
-      window.clearInterval(clockIntervalRef.current);
-      clockIntervalRef.current = null;
-    }
-    // RAF
-    if (rafRef.current !== null) {
-      window.cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    // Media
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-    }
-    // Audio
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
+  const startSession = () => {
+    if (!sentences.length) return;
+    setIsRunning(true);
+    setRemaining(MAX_TIME);
+    setIdx(0);
+
+    timerRef.current = window.setInterval(() => {
+      setRemaining(prev => {
+        const next = prev - 1;
+        if (next <= 0) {
+          stopSession();
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+
+    sentenceRef.current = window.setInterval(() => {
+      setIdx(prev => (prev + 1) % Math.max(1, sentences.length));
+    }, SENTENCE_INTERVAL_MS);
   };
 
   const stopSession = () => {
-    if (!running) return;
+    setIsRunning(false);
     clearAll();
-    setRunning(false);
+    setLevelPct(0);
   };
 
-  // Cleanup przy unmount
+  // cleanup przy unmount
   useEffect(() => {
     return () => {
       clearAll();
+      // extra: zamknięcie mediów/audio, gdyby komponent był wyłączony w trakcie RUN
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const fmt = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(1, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  const current = sentences[idx] ?? "";
+  const next = sentences[(idx + 1) % Math.max(1, sentences.length)] ?? "";
+
   return (
-    <main className="p-6 max-w-3xl mx-auto">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Day Hub — {DEFAULT_DAY}</h1>
-        <div className="text-sm opacity-70">
-          {running ? "Session: RUNNING" : "Session: IDLE"}
+    <main className="prompter-full">
+      {/* TOPBAR z timerem */}
+      <header className="topbar topbar--dense">
+        <nav className="tabs">
+          <a className="tab active" href="/day" aria-current="page">Prompter</a>
+          <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
+        </nav>
+
+        <div className="top-info compact">
+          <span className="meta"><b>Użytkownik:</b> {USER_NAME}</span>
+          <span className="dot">•</span>
+          <span className="meta"><b>Dzień programu:</b> {DAY_LABEL}</span>
+        </div>
+
+        <div className="timer-badge">{fmt(remaining)}</div>
+
+        <div className="controls-top">
+          <button className="btn" onClick={startSession} disabled={isRunning || !sentences.length}>
+            START
+          </button>
+          <button className="btn btn--ghost" onClick={stopSession} disabled={!isRunning}>
+            STOP
+          </button>
         </div>
       </header>
 
-      <section className="mb-4 flex gap-3">
-        <button
-          onClick={startSession}
-          className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
-          disabled={running}
-        >
-          START
-        </button>
-        <button
-          onClick={stopSession}
-          className="px-4 py-2 rounded border disabled:opacity-50"
-          disabled={!running}
-        >
-          STOP
-        </button>
-        <div className="ml-auto text-sm">
-          Czas: <span className="tabular-nums">{elapsed}s</span>
+      <div className="workspace">
+        {/* WIDEO (mirror) */}
+        <div className="video-wrap">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={mirror ? "mirror" : ""}
+          />
         </div>
-      </section>
 
-      <section className="rounded-2xl border p-4">
-        <h2 className="mb-2 font-medium">Tekst dnia</h2>
-        <div
-          id="reader"
-          className="prose whitespace-pre-wrap leading-relaxed max-h-[50vh] overflow-auto"
-        >
-          {dayText}
-        </div>
-      </section>
-
-      {ENABLE_MEDIA && (
-        <section className="mt-6 text-sm opacity-70">
-          Kamera/mikrofon aktywowane podczas sesji (przez getUserMedia).
+        {/* TEKST DNIA */}
+        <section className="reading-panel" id="reader">
+          <div className="current">{current || "(brak treści dnia)"}</div>
+          <div className="next">{next}</div>
         </section>
-      )}
+
+        {/* VU-meter */}
+        <div className="meter-vertical">
+          <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
+        </div>
+      </div>
     </main>
   );
 }
+
 
 
 
