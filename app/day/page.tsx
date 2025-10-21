@@ -1,98 +1,214 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+// dzielenie tekstu: po liniach lub po .?!
+function splitIntoSentences(input: string): string[] {
+  const raw = input.replace(/\r/g, " ").replace(/\n+/g, "\n").trim();
+  const lines = raw.split("\n").map(s => s.trim()).filter(Boolean);
+  if (lines.length > 1) return lines;
+  return raw.split(/(?<=[\.\?\!])\s+/g).map(s => s.trim()).filter(Boolean);
+}
+
+// pobierz parametr z URL (np. ?day=03)
+function getParam(name: string, fallback: string) {
+  if (typeof window === "undefined") return fallback;
+  const v = new URLSearchParams(window.location.search).get(name);
+  return (v && v.trim()) || fallback;
+}
 
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [mediaActive, setMediaActive] = useState(false);
-  const [dayText, setDayText] = useState<string>("(ładowanie…)");
 
-  // 🔹 wczytaj tekst dnia
+  // --- USTAWIENIA ---
+  const USER_NAME = "demo";
+  const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? (getParam("day","01")) : "01");
+  const MAX_TIME = 6 * 60;           // 6 minut
+  const SENTENCE_INTERVAL_MS = 5000; // zmiana zdania co 5 s
+
+  // --- STANY ---
+  const [isRunning, setIsRunning] = useState(false);
+  const [remaining, setRemaining] = useState(MAX_TIME);
+  const [sentences, setSentences] = useState<string[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [levelPct, setLevelPct] = useState(0);
+  const [mirror] = useState(true);
+
+  // timery
+  const timerRef = useRef<number | null>(null);
+  const sentenceRef = useRef<number | null>(null);
+
+  // audio api
+  const mediaRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const dataArrayRef = useRef<Uint8Array | null>(null);
+
+  // helper: mm:ss
+  const mmss = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${String(sec).padStart(2,"0")}`;
+  };
+
+  // wczytaj treść dnia
   useEffect(() => {
-    fetch("/days/day9.txt", { cache: "no-store" })
-      .then((res) => (res.ok ? res.text() : "(brak treści dnia)"))
-      .then((txt) => setDayText(txt))
-      .catch(() => setDayText("(błąd ładowania pliku)"));
+    const day = typeof window !== "undefined" ? getParam("day","01") : "01";
+    fetch(`/days/day${day}.txt`, { cache: "no-store" })
+      .then(r => r.ok ? r.text() : "(brak treści dnia)")
+      .then(txt => setSentences(splitIntoSentences(txt)))
+      .catch(() => setSentences(["(błąd ładowania)"]))
   }, []);
 
-  // 🔹 uruchom kamerę i mikrofon
-  const startMedia = async () => {
+  // oblicz pasek głośności (0–100%)
+  const computeLevel = () => {
+    const analyser = analyserRef.current;
+    const data = dataArrayRef.current;
+    if (!analyser || !data) return 0;
+    analyser.getByteTimeDomainData(data);
+    // prosty peak na podstawie odchylenia od środka 128
+    let maxDev = 0;
+    for (let i=0;i<data.length;i++) {
+      const dev = Math.abs(data[i] - 128);
+      if (dev > maxDev) maxDev = dev;
+    }
+    // skala do ~0–100
+    return Math.min(100, Math.round((maxDev / 64) * 100));
+  };
+
+  // start sesji
+  const start = async () => {
+    if (isRunning) return;
+    setIsRunning(true);
+    setRemaining(MAX_TIME);
+
     try {
+      // MEDIA (kamera + mic)
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
+        video: { facingMode: "user" },
+        audio: true
       });
+      mediaRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
       }
-      setMediaActive(true);
-    } catch (err) {
-      console.error("Błąd getUserMedia:", err);
-      alert("Nie udało się uruchomić kamery/mikrofonu");
+
+      // AUDIO — analyser
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      const bufferLength = analyser.fftSize;
+      const dataArray = new Uint8Array(bufferLength);
+      src.connect(analyser);
+      analyserRef.current = analyser;
+      dataArrayRef.current = dataArray;
+    } catch (e) {
+      console.error("getUserMedia error", e);
+    }
+
+    // TIMER odliczania
+    if (timerRef.current === null) {
+      timerRef.current = window.setInterval(() => {
+        setRemaining(prev => {
+          const n = Math.max(0, prev - 1);
+          if (n === 0) stop();
+          return n;
+        });
+        // update poziomu głośności
+        setLevelPct(computeLevel());
+      }, 1000);
+    }
+
+    // zmiana zdania co X sekund
+    if (sentenceRef.current === null && sentences.length > 0) {
+      sentenceRef.current = window.setInterval(() => {
+        setIdx(i => (i + 1) % sentences.length);
+      }, SENTENCE_INTERVAL_MS);
     }
   };
 
-  // 🔹 zatrzymaj kamerę i mikrofon
-  const stopMedia = () => {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
+  // stop sesji
+  const stop = () => {
+    if (!isRunning) return;
+
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (sentenceRef.current !== null) {
+      window.clearInterval(sentenceRef.current);
+      sentenceRef.current = null;
+    }
+
+    if (mediaRef.current) {
+      mediaRef.current.getTracks().forEach(t => t.stop());
+      mediaRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(()=>{});
+      audioCtxRef.current = null;
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    setMediaActive(false);
+
+    setIsRunning(false);
+    setLevelPct(0);
   };
 
-  // 🔹 cleanup po opuszczeniu strony
+  // cleanup on unmount
   useEffect(() => {
-    return () => stopMedia();
+    return () => stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // aktualne zdanie
+  const current = sentences.length ? sentences[idx] : "(ładowanie…)";
+
   return (
-    <main className="relative w-screen h-screen bg-black text-white overflow-hidden">
-      {/* 🔹 PANEL GÓRNY */}
-      <div className="absolute top-0 left-0 w-full flex justify-between items-center px-4 py-2 bg-black/80 text-sm z-20">
-        <div className="flex gap-2">
-          <button
-            onClick={startMedia}
-            disabled={mediaActive}
-            className="px-3 py-1 bg-white text-black rounded disabled:opacity-40"
-          >
-            Start
-          </button>
-          <button
-            onClick={stopMedia}
-            disabled={!mediaActive}
-            className="px-3 py-1 border border-white rounded disabled:opacity-40"
-          >
-            Stop
-          </button>
+    <main className="prompter-full">
+      {/* TOP */}
+      <div className="topbar">
+        <div className="group-left">
+          <button className="tab active">Prompter</button>
+          <button className="tab">Rysownik</button>
+          <div className="meta">Użytkownik: <b>{USER_NAME}</b></div>
+          <div className="meta">Dzień programu: <b>{DAY_LABEL}</b></div>
         </div>
-        <div className="text-right">
-          <div>Użytkownik: demo</div>
-          <div>Dzień programu: Dzień 09</div>
+        <div className="group-right">
+          <div className="timer">
+            <div className="pill">{mmss(remaining)}</div>
+            {!isRunning ? (
+              <button onClick={start} className="btn">START</button>
+            ) : (
+              <button onClick={stop} className="btn">STOP</button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* 🔹 WIDEO Z KAMERY */}
-      <video
-        ref={videoRef}
-        autoPlay
-        muted
-        playsInline
-        className="absolute inset-0 w-full h-full object-cover opacity-30"
-      />
+      {/* CAMERA */}
+      <div className="camera" style={{ transform: mirror ? "scaleX(-1)" : "none" }}>
+        <video ref={videoRef} autoPlay muted playsInline />
+        <div className="shade" />
+      </div>
 
-      {/* 🔹 TEKST NA ŚRODKU */}
-      <div className="absolute inset-0 flex items-center justify-center text-center px-6">
-        <div className="text-base leading-relaxed whitespace-pre-line max-w-[90%]">
-          {dayText}
-        </div>
+      {/* METER (pionowy pasek) */}
+      <div className="meter-vertical" aria-hidden>
+        <div className="fill" style={{ height: `${levelPct}%` }} />
+      </div>
+
+      {/* CENTER TEXT */}
+      <div className="center-wrap">
+        <div className="center-text">{current}</div>
       </div>
     </main>
   );
 }
+
 
 
 
