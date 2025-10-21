@@ -18,69 +18,109 @@ html,body{
   position:fixed;top:0;left:0;right:0;z-index:40;
   display:flex;align-items:center;justify-content:space-between;
   gap:10px;padding:10px 12px;
-  background:rgba(0,0,0,.85);backdrop-filter:blur(3px);
-  border-bottom:1px solid rgba(255,255,255,.06);
+  background:rgba(0,0,0,.5);backdrop-filter:blur(8px);
+  padding-top:calc(10px + env(safe-area-inset-top, 0px));
+  border-bottom:1px solid rgba(255,255,255,.08);
 }
-.group-left,.group-right{display:flex;align-items:center;gap:8px}
+.topbar--dense{padding:12px 14px}
+
+.tabs{display:flex;gap:10px;align-items:center}
 .tab{
-  appearance:none;border:0;outline:0;cursor:pointer;
-  background:rgba(255,255,255,.1);color:#fff;
-  padding:8px 12px;border-radius:999px;
-  font-size:14px;line-height:1;font-weight:500;
+  padding:8px 12px;border-radius:999px;border:1px solid #333;
+  color:#ddd;text-decoration:none;font-size:14px
 }
-.tab.active{background:#fff;color:#000}
-.meta{opacity:.8;font-size:14px}
+.tab.active{background:#1c1c1c;border-color:#444;color:#fff}
+.tab.disabled{opacity:.45;cursor:not-allowed}
+
+.top-info{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.top-info.compact{gap:8px}
+.top-info .dot{opacity:.6}
+.meta{font-size:14px;opacity:.95}
+
+.controls-top{display:flex;gap:10px;align-items:center}
 .btn{
-  appearance:none;border:1px solid rgba(255,255,255,.25);
-  background:transparent;color:#fff;cursor:pointer;
-  border-radius:999px;font-size:14px;line-height:1;
-  padding:8px 14px;
+  background:#1f1f1f;border:1px solid #333;color:#fff;border-radius:10px;
+  padding:10px 14px;font-size:14px;cursor:pointer
 }
-.timer{
-  display:inline-flex;align-items:center;gap:8px;
-  background:rgba(255,255,255,.08);
-  border-radius:999px;padding:6px;
-}
-.timer .pill{
-  background:#fff;color:#000;font-weight:700;
-  border-radius:999px;padding:6px 12px;
-  font-variant-numeric:tabular-nums;
+.btn:hover{background:#333}
+
+/* --- TIMER --- */
+.timer-top {
+  position: fixed;
+  top: 70px; /* przeniesiony niżej pod topbar */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10; /* mniejszy niż topbar, więc będzie POD nim */
+  font-weight: 800;
+  letter-spacing: .5px;
 }
 
-/* --- CAMERA LAYER --- */
-.camera{
-  position:absolute;inset:0;z-index:1;
-}
-.camera video{
-  position:absolute;inset:0;width:100%;height:100%;
-  object-fit:cover;opacity:.28;
-}
-.camera .shade{
-  position:absolute;inset:0;pointer-events:none;
-  background:linear-gradient(180deg,rgba(0,0,0,.15),rgba(0,0,0,.55));
+.timer-top--strong {
+  font-size: clamp(30px, 4.4vw, 56px);
+  color: #fff;
+  opacity: .95;
+  text-shadow:
+    0 0 24px rgba(0, 0, 0, .9),
+    0 0 40px rgba(0, 0, 0, .5),
+    0 0 2px rgba(0, 0, 0, 1);
 }
 
-/* --- CENTER TEXT --- */
-.center-wrap{
-  position:absolute;inset:0;z-index:2;
+
+/* --- KAMERA --- */
+.stage{
+  position:fixed;inset:0;
+  width:100%;height:100%;
+  background:#000;
+  overflow:hidden;z-index:1;
+}
+.cam{width:100%;height:100%;object-fit:cover}
+.mirrored .cam{transform:scaleX(-1)}
+
+/* --- TEKST NA ŚRODKU --- */
+.overlay.center{
+  position:absolute;inset:0;
   display:flex;align-items:center;justify-content:center;
-  padding:0 20px;
+  pointer-events:none;z-index:5;
 }
 .center-text{
-  max-width:720px;width:100%;
-  text-align:center;white-space:pre-wrap;
-  line-height:1.6;font-size:14px; /* małe litery */
-  opacity:.96;
+  text-align:center;
+  max-width:84%;
+  font-size:clamp(18px,2.4vw,32px);
+  line-height:1.35;
+  color:rgba(255,255,255,.7);
+  text-shadow:0 0 16px rgba(0,0,0,.9);
+  position:absolute;
+  top:50%;
+  left:50%;
+  transform:translate(-50%, -50%);
 }
+.fade{animation:fadeIn .5s ease both}
+@keyframes fadeIn{from{opacity:0;transform:translate(-50%, -48%)}to{opacity:1;transform:translate(-50%, -50%)}}
 
-/* --- VOLUME METER (pionowy pasek po prawej) --- */
-.meter-vertical{
-  position:fixed;z-index:30;right:16px;top:64px;bottom:16px;width:10px;
-  background:rgba(255,255,255,.06);border-radius:999px;
+/* --- INTRO --- */
+.intro{
+  text-align:center;
+  max-width:86%;
+  color:rgba(255,255,255,.9);
+  text-shadow:0 0 14px rgba(0,0,0,.9);
 }
-.meter-vertical .fill{
-  position:absolute;left:0;bottom:0;right:0;height:0%;
-  background:rgba(255,255,255,.75);
+.intro h2{font-size:clamp(22px,3.2vw,32px);margin-bottom:10px;font-weight:800}
+.intro p{font-size:clamp(14px,2vw,18px);opacity:.9}
+
+/* --- VU-METER --- */
+.meter-vertical{
+  position:absolute;
+  right:18px;top:18%;
+  width:10px;height:64%;
+  background:rgba(30,30,30,.55);
+  border:1px solid #333;
+  border-radius:999px;
+  overflow:hidden;
+  z-index:10;
+}
+.meter-vertical-fill{
+  position:absolute;left:0;right:0;bottom:0;height:0%;
+  background:linear-gradient(180deg,#4df,#7f7,#ff5);
   border-radius:999px;
   transition:height .08s linear;
 }
@@ -93,6 +133,7 @@ html,body{
   .meter-vertical{right:10px;width:8px}
   .center-text{max-width:90%}
 }
+
 
 
 
