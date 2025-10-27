@@ -421,10 +421,13 @@ if (rec && rec.state !== "recording") {
         <div className="meter-vertical">
           <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
         </div>
-      </div>
+           </div>
     </main>
   );
 }
+
+export default PrompterPage;
+
 
 
 
