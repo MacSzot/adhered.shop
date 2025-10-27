@@ -55,7 +55,11 @@ function deburrPL(s: string) {
     .toLowerCase();
 }
 function normalize(s: string) {
-  return deburrPL(s).replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  // bez Unicode property escapes – zgodne z domyślnym targetem TS/Next
+  return deburrPL(s)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 function coverage(transcript: string, target: string) {
   const T = normalize(target).split(" ").filter(Boolean);
@@ -70,7 +74,11 @@ function coverage(transcript: string, target: string) {
   return hit / T.length;
 }
 function splitSentences(s: string) {
-  return s.split(/(?<=[\.\!\?])\s+/g).map(x => x.trim()).filter(Boolean);
+  // bez lookbehind – kompatybilny podział po . ! ?
+  return s
+    .split(/[.!?]+\s+/g)
+    .map(x => x.trim())
+    .filter(Boolean);
 }
 
 export default function PrompterPage() {
@@ -416,6 +424,7 @@ export default function PrompterPage() {
     </main>
   );
 }
+
 
 
 
