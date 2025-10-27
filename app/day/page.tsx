@@ -148,11 +148,12 @@ export default function PrompterPage() {
         // cicho w MVP
       }
 
-      if (mediaRecorderRef.current?.state !== "recording") {
-        mediaRecorderRef.current.start();
-        setTimeout(() => mediaRecorderRef.current?.stop(), CHUNK_MS);
-      }
-    };
+      const rec = mediaRecorderRef.current;
+if (rec && rec.state !== "recording") {
+  rec.start();
+  setTimeout(() => rec.stop(), CHUNK_MS);
+}
+
 
     mr.start();
     setTimeout(() => mr.stop(), CHUNK_MS);
