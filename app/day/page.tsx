@@ -1,6 +1,41 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+// --- PLAN DNIA: typy + loader z priorytetem JSON -> TXT ---
+type PlanStep = {
+  mode: "VERIFY" | "SAY";
+  target?: string;             // dla VERIFY
+  prompt?: string;             // dla SAY
+  min_sentences?: number;
+  starts_with?: string[];
+  starts_with_any?: string[];
+};
+
+async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
+  // 1) spróbuj JSON
+  try {
+    const r = await fetch(`/days/${day}.plan.json`, { cache: "no-store" });
+    if (r.ok) {
+      const j = await r.json();
+      const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
+      if (steps.length) return { source: "json", steps };
+    }
+  } catch { /* ign */ }
+
+  // 2) fallback TXT
+  const r2 = await fetch(`/days/${day}.txt`, { cache: "no-store" });
+  if (!r2.ok) throw new Error(`Brak pliku dnia: ${day}.plan.json i ${day}.txt`);
+  const txt = await r2.text();
+
+  // Każda linia TXT → VERIFY
+  const steps: PlanStep[] = txt
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(line => ({ mode: "VERIFY" as const, target: line }));
+
+  return { source: "txt", steps };
+}
 
 // dzielenie tekstu: po liniach lub po .?!
 function splitIntoSentences(input: string): string[] {
@@ -38,21 +73,37 @@ export default function PrompterPage() {
   const timerRef = useRef<number | null>(null);
   const sentenceRef = useRef<number | null>(null);
 
-  // wczytanie treści dnia z /public/days/XX.txt
-  useEffect(() => {
-    const day = getParam("day", "01"); // np. 01, 02, ..., 11
-    fetch(`/days/${day}.txt`)
-      .then(r => {
-        if (!r.ok) throw new Error("Brak pliku dnia");
-        return r.text();
-      })
-      .then(t => {
-        const segs = splitIntoSentences(t);
-        setSentences(segs.length ? segs : ["Brak treści."]);
-        setIdx(0);
-      })
-      .catch(() => setSentences(["Brak treści dla tego dnia."]));
-  }, []);
+// wczytanie planu dnia: priorytet JSON -> fallback TXT
+useEffect(() => {
+  const day = getParam("day", "01");
+  (async () => {
+    try {
+      const { source, steps } = await loadDayPlanOrTxt(day);
+
+      // Co wyświetlać na ekranie:
+      // - VERIFY: pokazujemy target (zdanie do powtórzenia)
+      // - SAY: pokazujemy prompt (instrukcję dla użytkownika)
+      const displayLines = steps.map(s =>
+        s.mode === "VERIFY"
+          ? (s.target || "")
+          : (s.prompt || "")
+      ).filter(Boolean);
+
+      setSentences(displayLines.length ? displayLines : ["Brak treści."]);
+      setIdx(0);
+
+      // (na później: możesz tu zapisać steps do ref/state, żeby Whisper wiedział co weryfikować)
+      // stepsRef.current = steps;
+
+      // Debug (opcjonalnie): zobacz w konsoli, czy JSON został użyty
+      console.log(`[DAY ${day}] source:`, source, `steps: ${steps.length}`);
+    } catch (e) {
+      console.error(e);
+      setSentences(["Brak treści dla tego dnia."]);
+    }
+  })();
+}, []);
+
 
   // VU-meter (tylko wizualizacja)
   useEffect(() => {
