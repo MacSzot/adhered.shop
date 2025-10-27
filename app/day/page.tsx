@@ -427,12 +427,3 @@ if (rec && rec.state !== "recording") {
 }
 
 export default PrompterPage;
-
-
-
-
-
-
-
-
-
