@@ -1,38 +1,38 @@
-import { NextResponse } from "next/server";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import OpenAI from "openai";
 
-// uruchamiane w środowisku edge (szybsze)
-export const runtime = "edge";
-export const maxDuration = 15; // maksymalny czas żądania (sekundy)
+export async function GET() {
+  return new Response(JSON.stringify({ ok: true, service: "whisper" }), {
+    headers: { "content-type": "application/json" },
+    status: 200,
+  });
+}
 
 export async function POST(req: Request) {
   try {
-    // odbieramy dane audio z formularza
     const form = await req.formData();
     const file = form.get("file");
-
-    // walidacja — czy przyszło nagranie?
     if (!(file instanceof File)) {
-      return NextResponse.json({ error: "No file" }, { status: 400 });
+      return new Response(JSON.stringify({ error: "file missing" }), { status: 400 });
     }
 
-    // inicjalizacja OpenAI SDK z kluczem z ENV
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    // wysyłamy audio do Whispera
-    const result = await openai.audio.transcriptions.create({
-      file,               // plik audio (.webm / .mp3 / .m4a / .wav)
-      model: "whisper-1", // model transkrypcji
-      language: "pl"      // wymuszamy język polski
+    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    // Minimalny, stabilny wariant
+    const tr = await client.audio.transcriptions.create({
+      file,
+      model: "whisper-1",
+      // language: "pl", // opcjonalnie
+      // response_format: "json", // domyślnie ok
     });
 
-    // zwracamy tekst jako JSON
-    return NextResponse.json({ text: result.text || "" });
-  } catch (err: any) {
-    console.error("Whisper error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Transcription failed" },
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ text: tr.text ?? "" }), {
+      headers: { "content-type": "application/json" },
+      status: 200,
+    });
+  } catch (e: any) {
+    const msg = e?.message || "server error";
+    return new Response(JSON.stringify({ error: msg }), { status: 500 });
   }
 }
