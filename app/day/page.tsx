@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+
 // --- PLAN DNIA: typy + loader z priorytetem JSON -> TXT ---
 type PlanStep = {
   mode: "VERIFY" | "SAY";
@@ -9,6 +10,9 @@ type PlanStep = {
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
+  prep_ms?: number;            // meta: czas przygotowania (SAY)
+  dwell_ms?: number;           // meta: czas wyświetlenia kroku
+  note?: string;               // meta: delikatna wskazówka w SAY
 };
 
 async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
@@ -22,27 +26,18 @@ async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; 
     }
   } catch { /* ign */ }
 
-  // 2) fallback TXT
+  // 2) fallback TXT → każda linia = VERIFY
   const r2 = await fetch(`/days/${day}.txt`, { cache: "no-store" });
   if (!r2.ok) throw new Error(`Brak pliku dnia: ${day}.plan.json i ${day}.txt`);
   const txt = await r2.text();
 
-  // Każda linia TXT → VERIFY
   const steps: PlanStep[] = txt
     .split(/\r?\n/)
     .map(s => s.trim())
     .filter(Boolean)
-    .map(line => ({ mode: "VERIFY" as const, target: line }));
+    .map(line => ({ mode: "VERIFY" as const, target: line, dwell_ms: 5000 }));
 
   return { source: "txt", steps };
-}
-
-// dzielenie tekstu: po liniach lub po .?!
-function splitIntoSentences(input: string): string[] {
-  const raw = input.replace(/\r/g, " ").replace(/\n+/g, "\n").trim();
-  const lines = raw.split("\n").map(s => s.trim()).filter(Boolean);
-  if (lines.length > 1) return lines;
-  return raw.split(/(?<=[\.\?\!])\s+/g).map(s => s.trim()).filter(Boolean);
 }
 
 // pobierz parametr z URL (np. ?day=03)
@@ -52,60 +47,137 @@ function getParam(name: string, fallback: string) {
   return (v && v.trim()) || fallback;
 }
 
+// --- Normalizacja / dopasowanie do VERIFY ---
+function deburrPL(s: string) {
+  return s
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[„”"’']/g, "")
+    .toLowerCase();
+}
+function normalize(s: string) {
+  return deburrPL(s).replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function coverage(transcript: string, target: string) {
+  const T = normalize(target).split(" ").filter(Boolean);
+  const W = normalize(transcript).split(" ").filter(Boolean);
+  if (!T.length || !W.length) return 0;
+  let hit = 0;
+  const used = new Set<number>();
+  for (const w of T) {
+    const idx = W.findIndex((x, i) => !used.has(i) && x === w);
+    if (idx !== -1) { used.add(idx); hit++; }
+  }
+  return hit / T.length;
+}
+function splitSentences(s: string) {
+  return s.split(/(?<=[\.\!\?])\s+/g).map(x => x.trim()).filter(Boolean);
+}
+
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // --- USTAWIENIA ---
   const USER_NAME = "demo";
   const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? (getParam("day","01")) : "01");
-  const MAX_TIME = 6 * 60;           // 6 minut
-  const SENTENCE_INTERVAL_MS = 5000; // zmiana zdania co 5 s
+  const MAX_TIME = 6 * 60; // 6 minut
 
   // --- STANY ---
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
-  const [sentences, setSentences] = useState<string[]>([]);
   const [idx, setIdx] = useState(0);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
 
+  // plan / kroki
+  const [steps, setSteps] = useState<PlanStep[]>([]);
+  const [displayText, setDisplayText] = useState<string>("");
+  type Phase = "prep" | "show";
+  const [phase, setPhase] = useState<Phase>("show");
+
   // timery
   const timerRef = useRef<number | null>(null);
-  const sentenceRef = useRef<number | null>(null);
+  const stepTimeoutRef = useRef<number | null>(null);
 
-// wczytanie planu dnia: priorytet JSON -> fallback TXT
-useEffect(() => {
-  const day = getParam("day", "01");
-  (async () => {
-    try {
-      const { source, steps } = await loadDayPlanOrTxt(day);
+  // bufor SAY (echo wypowiedzi)
+  const sayBufferRef = useRef<string>("");
 
-      // Co wyświetlać na ekranie:
-      // - VERIFY: pokazujemy target (zdanie do powtórzenia)
-      // - SAY: pokazujemy prompt (instrukcję dla użytkownika)
-      const displayLines = steps.map(s =>
-        s.mode === "VERIFY"
-          ? (s.target || "")
-          : (s.prompt || "")
-      ).filter(Boolean);
+  // --- AUDIO: mikrofon + Whisper nasłuch co 3s ---
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef   = useRef<MediaStream | null>(null);
+  const chunksRef        = useRef<BlobPart[]>([]);
+  const CHUNK_MS = 3000; // 3 sekundy
 
-      setSentences(displayLines.length ? displayLines : ["Brak treści."]);
-      setIdx(0);
+  async function startMic() {
+    if (mediaRecorderRef.current) return;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioStreamRef.current = stream;
 
-      // (na później: możesz tu zapisać steps do ref/state, żeby Whisper wiedział co weryfikować)
-      // stepsRef.current = steps;
+    const mime = MediaRecorder.isTypeSupported("audio/webm")
+      ? "audio/webm"
+      : MediaRecorder.isTypeSupported("audio/mp4")
+      ? "audio/mp4"
+      : "";
 
-      // Debug (opcjonalnie): zobacz w konsoli, czy JSON został użyty
-      console.log(`[DAY ${day}] source:`, source, `steps: ${steps.length}`);
-    } catch (e) {
-      console.error(e);
-      setSentences(["Brak treści dla tego dnia."]);
-    }
-  })();
-}, []);
+    const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    mediaRecorderRef.current = mr;
 
+    mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
-  // VU-meter (tylko wizualizacja)
+    mr.onstop = async () => {
+      if (!chunksRef.current.length) return;
+      const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+      chunksRef.current = [];
+      const file = new File([blob], `clip.${(mr.mimeType || "").includes("mp4") ? "m4a" : "webm"}`, { type: blob.type });
+
+      const fd = new FormData();
+      fd.append("file", file);
+
+      try {
+        const res = await fetch("/api/whisper", { method: "POST", body: fd });
+        const data = await res.json();
+        if (data?.text) handleTranscript(data.text);
+      } catch {
+        // cicho w MVP
+      }
+
+      if (mediaRecorderRef.current?.state !== "recording") {
+        mediaRecorderRef.current.start();
+        setTimeout(() => mediaRecorderRef.current?.stop(), CHUNK_MS);
+      }
+    };
+
+    mr.start();
+    setTimeout(() => mr.stop(), CHUNK_MS);
+  }
+
+  function stopMic() {
+    mediaRecorderRef.current?.state === "recording" && mediaRecorderRef.current.stop();
+    mediaRecorderRef.current = null;
+    audioStreamRef.current?.getTracks().forEach(t => t.stop());
+    audioStreamRef.current = null;
+  }
+
+  // --- Loader planu dnia ---
+  useEffect(() => {
+    const day = getParam("day", "01");
+    (async () => {
+      try {
+        const { source, steps } = await loadDayPlanOrTxt(day);
+        setSteps(steps);
+        setIdx(0);
+        // wstępny napis
+        const first = steps[0];
+        setDisplayText(first?.mode === "VERIFY" ? (first.target || "") : (first?.prompt || ""));
+        console.log(`[DAY ${day}] source:`, source, `steps: ${steps.length}`);
+      } catch (e) {
+        console.error(e);
+        setSteps([{ mode: "VERIFY", target: "Brak treści dla tego dnia." }]);
+        setDisplayText("Brak treści dla tego dnia.");
+      }
+    })();
+  }, []);
+
+  // --- VU-meter (wizualizacja – niezależnie od Whispera) ---
   useEffect(() => {
     if (!isRunning) return;
 
@@ -118,7 +190,7 @@ useEffect(() => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         streamRef = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        if (videoRef.current) (videoRef.current as any).srcObject = stream;
 
         const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
         audioCtx = new Ctx();
@@ -154,18 +226,103 @@ useEffect(() => {
     };
   }, [isRunning]);
 
-  // start/stop
-  const clearAll = () => {
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    if (sentenceRef.current) window.clearInterval(sentenceRef.current);
-  };
+  // --- Silnik kroków (prep_ms/dwell_ms, VERIFY/SAY) ---
+  function clearStepTimeout() {
+    if (stepTimeoutRef.current) {
+      window.clearTimeout(stepTimeoutRef.current);
+      stepTimeoutRef.current = null;
+    }
+  }
 
+  function runStep(i: number) {
+    if (!steps.length) return;
+    const s = steps[i];
+    if (!s) return;
+
+    if (s.mode === "VERIFY") {
+      setPhase("show");
+      setDisplayText(s.target || "");
+      const dwell = Number(s.dwell_ms ?? 5000);
+
+      clearStepTimeout();
+      stepTimeoutRef.current = window.setTimeout(() => {
+        const next = (i + 1) % steps.length;
+        setIdx(next);
+        runStep(next);
+      }, dwell);
+    } else {
+      // SAY
+      const prep = Number(s.prep_ms ?? 5000);
+      const dwell = Number(s.dwell_ms ?? 45000);
+
+      sayBufferRef.current = ""; // reset echa
+      setPhase("prep");
+      setDisplayText(s.prompt || "");
+
+      clearStepTimeout();
+      stepTimeoutRef.current = window.setTimeout(() => {
+        setPhase("show"); // okno mówienia
+        setDisplayText(s.prompt || "");
+
+        clearStepTimeout();
+        stepTimeoutRef.current = window.setTimeout(() => {
+          const next = (i + 1) % steps.length;
+          setIdx(next);
+          sayBufferRef.current = "";
+          runStep(next);
+        }, dwell);
+      }, prep);
+    }
+  }
+
+  // --- Obsługa transkrypcji (VERIFY → auto-next, SAY → echo i wczesne zakończenie) ---
+  function handleTranscript(text: string) {
+    const s = steps[idx];
+    if (!s || !text) return;
+
+    if (s.mode === "VERIFY") {
+      const score = coverage(text, s.target || "");
+      const ok = score >= 0.8 && normalize(text).split(" ").length >= 3;
+      if (ok) {
+        clearStepTimeout();
+        const next = (idx + 1) % steps.length;
+        setIdx(next);
+        runStep(next);
+      }
+      return;
+    }
+
+    if (s.mode === "SAY") {
+      sayBufferRef.current = (sayBufferRef.current + " " + text).trim();
+      setDisplayText(`${s.prompt || ""}\n\n${sayBufferRef.current}`);
+
+      const sentences = splitSentences(sayBufferRef.current);
+      let count = sentences.length;
+
+      if (s.starts_with?.length) {
+        count = sentences.filter(t => s.starts_with!.some(sw => normalize(t).startsWith(normalize(sw)))).length;
+      } else if (s.starts_with_any?.length) {
+        count = sentences.filter(t => s.starts_with_any!.some(sw => normalize(t).startsWith(normalize(sw)))).length;
+      }
+
+      if ((s.min_sentences ?? 3) <= count) {
+        clearStepTimeout();
+        const next = (idx + 1) % steps.length;
+        setIdx(next);
+        sayBufferRef.current = "";
+        runStep(next);
+      }
+    }
+  }
+
+  // --- start/stop sesji ---
   const startSession = () => {
-    if (!sentences.length) return;
+    if (!steps.length) return;
     setIsRunning(true);
     setRemaining(MAX_TIME);
     setIdx(0);
 
+    // licznik czasu
     timerRef.current = window.setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) { stopSession(); return 0; }
@@ -173,14 +330,18 @@ useEffect(() => {
       });
     }, 1000);
 
-    sentenceRef.current = window.setInterval(() => {
-      setIdx(prev => (prev + 1) % Math.max(1, sentences.length));
-    }, SENTENCE_INTERVAL_MS);
+    // silnik kroków
+    runStep(0);
+
+    // audio → Whisper
+    startMic();
   };
 
   const stopSession = () => {
     setIsRunning(false);
-    clearAll();
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    clearStepTimeout();
+    stopMic();
     setLevelPct(0);
   };
 
@@ -225,7 +386,7 @@ useEffect(() => {
               <h2>Teleprompter</h2>
               <p>
                 Gdy będziesz gotowy, kliknij <b>Start</b> w panelu u góry.
-                Kamera i mikrofon włączą się, a zdania będą zmieniać się co 5 sekund.
+                Kamera i mikrofon włączą się, a kroki będą prowadzić Cię w spokojnym tempie.
               </p>
             </div>
           </div>
@@ -234,9 +395,16 @@ useEffect(() => {
         {/* Tekst podczas sesji */}
         {isRunning && (
           <div className="overlay center">
-            <div key={idx} className="center-text fade">
-              {sentences[idx] || ""}
+            <div key={idx} className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
+              {displayText || ""}
             </div>
+
+            {/* delikatna wskazówka dla SAY */}
+            {steps[idx]?.mode === "SAY" && phase === "show" && steps[idx]?.note && (
+              <div className="mt-4 text-center opacity-70 text-sm">
+                {steps[idx].note}
+              </div>
+            )}
           </div>
         )}
 
