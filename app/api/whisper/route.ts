@@ -1,41 +1,32 @@
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
+import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 
-// Ping GET — szybki test, czy endpoint żyje
-export async function GET() {
-  return new Response(JSON.stringify({ ok: true, service: "whisper" }), {
-    headers: { "content-type": "application/json" },
-    status: 200,
-  });
-}
+export const runtime = "nodejs";
 
-// POST — przyjmuje multipart/form-data z polem "file"
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const form = await req.formData();
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      return new Response(JSON.stringify({ error: "file missing" }), { status: 400 });
+    const formData = await req.formData();
+    const file = formData.get("file");
+
+    if (!file || !(file instanceof File)) {
+      return NextResponse.json({ error: "No audio file received" }, { status: 400 });
     }
 
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    const tr = await client.audio.transcriptions.create({
-      model: "whisper-1",
+    const response = await openai.audio.transcriptions.create({
       file,
-      // language: "pl", // opcjonalnie
+      model: "gpt-4o-mini-transcribe",
+      // Można też użyć: model: "whisper-1"
     });
 
-    return new Response(JSON.stringify({ text: tr.text ?? "" }), {
-      headers: { "content-type": "application/json" },
-      status: 200,
-    });
-  } catch (e: any) {
-    return new Response(JSON.stringify({ error: e?.message || "server error" }), {
-      headers: { "content-type": "application/json" },
-      status: 500,
-    });
+    return NextResponse.json({ text: response.text || "" });
+  } catch (err: any) {
+    console.error("Whisper error:", err);
+    return NextResponse.json({ error: err.message || "Whisper failed" }, { status: 500 });
   }
+}
+
+export async function GET() {
+  return NextResponse.json({ ok: true, service: "whisper" });
 }
