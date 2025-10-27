@@ -5,18 +5,17 @@ import { useEffect, useRef, useState } from "react";
 // --- PLAN DNIA: typy + loader z priorytetem JSON -> TXT ---
 type PlanStep = {
   mode: "VERIFY" | "SAY";
-  target?: string;             // dla VERIFY
-  prompt?: string;             // dla SAY
+  target?: string;
+  prompt?: string;
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
-  prep_ms?: number;            // meta: czas przygotowania (SAY)
-  dwell_ms?: number;           // meta: czas wyświetlenia kroku
-  note?: string;               // meta: delikatna wskazówka w SAY
+  prep_ms?: number;
+  dwell_ms?: number;
+  note?: string;
 };
 
 async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
-  // 1) spróbuj JSON
   try {
     const r = await fetch(`/days/${day}.plan.json`, { cache: "no-store" });
     if (r.ok) {
@@ -24,9 +23,8 @@ async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; 
       const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
       if (steps.length) return { source: "json", steps };
     }
-  } catch { /* ign */ }
+  } catch {}
 
-  // 2) fallback TXT → każda linia = VERIFY
   const r2 = await fetch(`/days/${day}.txt`, { cache: "no-store" });
   if (!r2.ok) throw new Error(`Brak pliku dnia: ${day}.plan.json i ${day}.txt`);
   const txt = await r2.text();
@@ -40,14 +38,13 @@ async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; 
   return { source: "txt", steps };
 }
 
-// pobierz parametr z URL (np. ?day=03)
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
 
-// --- Normalizacja / dopasowanie do VERIFY ---
+// --- Normalizacja ---
 function deburrPL(s: string) {
   return s
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -55,7 +52,6 @@ function deburrPL(s: string) {
     .toLowerCase();
 }
 function normalize(s: string) {
-  // bez Unicode property escapes – zgodne z domyślnym targetem TS/Next
   return deburrPL(s)
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -74,7 +70,6 @@ function coverage(transcript: string, target: string) {
   return hit / T.length;
 }
 function splitSentences(s: string) {
-  // bez lookbehind – kompatybilny podział po . ! ?
   return s
     .split(/[.!?]+\s+/g)
     .map(x => x.trim())
@@ -84,37 +79,31 @@ function splitSentences(s: string) {
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // --- USTAWIENIA ---
   const USER_NAME = "demo";
-  const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? (getParam("day","01")) : "01");
-  const MAX_TIME = 6 * 60; // 6 minut
+  const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? getParam("day", "01") : "01");
+  const MAX_TIME = 6 * 60;
 
-  // --- STANY ---
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
   const [idx, setIdx] = useState(0);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
 
-  // plan / kroki
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [displayText, setDisplayText] = useState<string>("");
   type Phase = "prep" | "show";
   const [phase, setPhase] = useState<Phase>("show");
 
-  // timery
   const timerRef = useRef<number | null>(null);
   const stepTimeoutRef = useRef<number | null>(null);
-
-  // bufor SAY (echo wypowiedzi)
   const sayBufferRef = useRef<string>("");
 
-  // --- AUDIO: mikrofon + Whisper nasłuch co 3s ---
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioStreamRef   = useRef<MediaStream | null>(null);
-  const chunksRef        = useRef<BlobPart[]>([]);
-  const CHUNK_MS = 3000; // 3 sekundy
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<BlobPart[]>([]);
+  const CHUNK_MS = 3000;
 
+  // --- Mikrofon + Whisper nasłuch ---
   async function startMic() {
     if (mediaRecorderRef.current) return;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -129,13 +118,19 @@ export default function PrompterPage() {
     const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     mediaRecorderRef.current = mr;
 
-    mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+    mr.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
+    };
 
     mr.onstop = async () => {
       if (!chunksRef.current.length) return;
       const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
       chunksRef.current = [];
-      const file = new File([blob], `clip.${(mr.mimeType || "").includes("mp4") ? "m4a" : "webm"}`, { type: blob.type });
+      const file = new File(
+        [blob],
+        `clip.${(mr.mimeType || "").includes("mp4") ? "m4a" : "webm"}`,
+        { type: blob.type }
+      );
 
       const fd = new FormData();
       fd.append("file", file);
@@ -144,23 +139,22 @@ export default function PrompterPage() {
         const res = await fetch("/api/whisper", { method: "POST", body: fd });
         const data = await res.json();
         if (data?.text) handleTranscript(data.text);
-      } catch {
-        // cicho w MVP
-      }
+      } catch {}
 
       const rec = mediaRecorderRef.current;
-if (rec && rec.state !== "recording") {
-  rec.start();
-  setTimeout(() => rec.stop(), CHUNK_MS);
-}
-
+      if (rec && rec.state !== "recording") {
+        rec.start();
+        setTimeout(() => rec.stop(), CHUNK_MS);
+      }
+    }; // 🔹 poprawnie zamknięte
 
     mr.start();
     setTimeout(() => mr.stop(), CHUNK_MS);
   }
 
   function stopMic() {
-    mediaRecorderRef.current?.state === "recording" && mediaRecorderRef.current.stop();
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state === "recording") rec.stop();
     mediaRecorderRef.current = null;
     audioStreamRef.current?.getTracks().forEach(t => t.stop());
     audioStreamRef.current = null;
@@ -174,9 +168,8 @@ if (rec && rec.state !== "recording") {
         const { source, steps } = await loadDayPlanOrTxt(day);
         setSteps(steps);
         setIdx(0);
-        // wstępny napis
         const first = steps[0];
-        setDisplayText(first?.mode === "VERIFY" ? (first.target || "") : (first?.prompt || ""));
+        setDisplayText(first?.mode === "VERIFY" ? first.target || "" : first?.prompt || "");
         console.log(`[DAY ${day}] source:`, source, `steps: ${steps.length}`);
       } catch (e) {
         console.error(e);
@@ -186,10 +179,9 @@ if (rec && rec.state !== "recording") {
     })();
   }, []);
 
-  // --- VU-meter (wizualizacja – niezależnie od Whispera) ---
+  // --- VU-meter ---
   useEffect(() => {
     if (!isRunning) return;
-
     let raf: number | null = null;
     let analyser: AnalyserNode | null = null;
     let audioCtx: AudioContext | null = null;
@@ -235,7 +227,7 @@ if (rec && rec.state !== "recording") {
     };
   }, [isRunning]);
 
-  // --- Silnik kroków (prep_ms/dwell_ms, VERIFY/SAY) ---
+  // --- Silnik kroków ---
   function clearStepTimeout() {
     if (stepTimeoutRef.current) {
       window.clearTimeout(stepTimeoutRef.current);
@@ -252,7 +244,6 @@ if (rec && rec.state !== "recording") {
       setPhase("show");
       setDisplayText(s.target || "");
       const dwell = Number(s.dwell_ms ?? 5000);
-
       clearStepTimeout();
       stepTimeoutRef.current = window.setTimeout(() => {
         const next = (i + 1) % steps.length;
@@ -260,19 +251,15 @@ if (rec && rec.state !== "recording") {
         runStep(next);
       }, dwell);
     } else {
-      // SAY
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
-
-      sayBufferRef.current = ""; // reset echa
+      sayBufferRef.current = "";
       setPhase("prep");
       setDisplayText(s.prompt || "");
-
       clearStepTimeout();
       stepTimeoutRef.current = window.setTimeout(() => {
-        setPhase("show"); // okno mówienia
+        setPhase("show");
         setDisplayText(s.prompt || "");
-
         clearStepTimeout();
         stepTimeoutRef.current = window.setTimeout(() => {
           const next = (i + 1) % steps.length;
@@ -284,11 +271,10 @@ if (rec && rec.state !== "recording") {
     }
   }
 
-  // --- Obsługa transkrypcji (VERIFY → auto-next, SAY → echo i wczesne zakończenie) ---
+  // --- Obsługa transkrypcji ---
   function handleTranscript(text: string) {
     const s = steps[idx];
     if (!s || !text) return;
-
     if (s.mode === "VERIFY") {
       const score = coverage(text, s.target || "");
       const ok = score >= 0.8 && normalize(text).split(" ").length >= 3;
@@ -300,20 +286,16 @@ if (rec && rec.state !== "recording") {
       }
       return;
     }
-
     if (s.mode === "SAY") {
       sayBufferRef.current = (sayBufferRef.current + " " + text).trim();
       setDisplayText(`${s.prompt || ""}\n\n${sayBufferRef.current}`);
-
       const sentences = splitSentences(sayBufferRef.current);
       let count = sentences.length;
-
       if (s.starts_with?.length) {
         count = sentences.filter(t => s.starts_with!.some(sw => normalize(t).startsWith(normalize(sw)))).length;
       } else if (s.starts_with_any?.length) {
         count = sentences.filter(t => s.starts_with_any!.some(sw => normalize(t).startsWith(normalize(sw)))).length;
       }
-
       if ((s.min_sentences ?? 3) <= count) {
         clearStepTimeout();
         const next = (idx + 1) % steps.length;
@@ -324,25 +306,19 @@ if (rec && rec.state !== "recording") {
     }
   }
 
-  // --- start/stop sesji ---
+  // --- Start / Stop sesji ---
   const startSession = () => {
     if (!steps.length) return;
     setIsRunning(true);
     setRemaining(MAX_TIME);
     setIdx(0);
-
-    // licznik czasu
     timerRef.current = window.setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) { stopSession(); return 0; }
         return prev - 1;
       });
     }, 1000);
-
-    // silnik kroków
     runStep(0);
-
-    // audio → Whisper
     startMic();
   };
 
@@ -359,7 +335,6 @@ if (rec && rec.state !== "recording") {
 
   return (
     <main className="prompter-full">
-      {/* Topbar (większy, zbity) */}
       <header className="topbar topbar--dense">
         <nav className="tabs">
           <a className="tab active" href="/day" aria-current="page">Prompter</a>
@@ -381,14 +356,11 @@ if (rec && rec.state !== "recording") {
         </div>
       </header>
 
-      {/* Timer pod panelem */}
       <div className="timer-top timer-top--strong">{fmt(remaining)}</div>
 
-      {/* Kamera + overlay */}
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
-        {/* Intro przed startem */}
         {!isRunning && (
           <div className="overlay center">
             <div className="intro">
@@ -401,14 +373,12 @@ if (rec && rec.state !== "recording") {
           </div>
         )}
 
-        {/* Tekst podczas sesji */}
         {isRunning && (
           <div className="overlay center">
             <div key={idx} className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
               {displayText || ""}
             </div>
 
-            {/* delikatna wskazówka dla SAY */}
             {steps[idx]?.mode === "SAY" && phase === "show" && steps[idx]?.note && (
               <div className="mt-4 text-center opacity-70 text-sm">
                 {steps[idx].note}
@@ -417,13 +387,10 @@ if (rec && rec.state !== "recording") {
           </div>
         )}
 
-        {/* pionowy VU-meter */}
         <div className="meter-vertical">
           <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
         </div>
-           </div>
+      </div>
     </main>
   );
 }
-
-export default PrompterPage;
