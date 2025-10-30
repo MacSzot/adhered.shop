@@ -94,19 +94,23 @@ export default function PrompterPage() {
   type Phase = "prep" | "show";
   const [phase, setPhase] = useState<Phase>("show");
 
+  // --- SAY: licznik/echo ---
+  const [isSayCollect, setIsSayCollect] = useState(false);
+  const [sayEcho, setSayEcho] = useState<string[]>([]);
+  const [sayCount, setSayCount] = useState(0);
+
   const timerRef = useRef<number | null>(null);
   const stepTimeoutRef = useRef<number | null>(null);
-  const sayBufferRef = useRef<string>("");
 
+  // --- AUDIO: mikrofon + Whisper nasłuch ---
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const CHUNK_MS = 3000;
 
-  // --- Mikrofon + Whisper nasłuch ---
   async function startMic() {
     if (mediaRecorderRef.current) return;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     audioStreamRef.current = stream;
 
     const mime = MediaRecorder.isTypeSupported("audio/webm")
@@ -139,14 +143,16 @@ export default function PrompterPage() {
         const res = await fetch("/api/whisper", { method: "POST", body: fd });
         const data = await res.json();
         if (data?.text) handleTranscript(data.text);
-      } catch {}
+      } catch {
+        // ciche w MVP
+      }
 
       const rec = mediaRecorderRef.current;
       if (rec && rec.state !== "recording") {
         rec.start();
         setTimeout(() => rec.stop(), CHUNK_MS);
       }
-    }; // 🔹 poprawnie zamknięte
+    };
 
     mr.start();
     setTimeout(() => mr.stop(), CHUNK_MS);
@@ -179,7 +185,7 @@ export default function PrompterPage() {
     })();
   }, []);
 
-  // --- VU-meter ---
+  // --- VU-meter (wizual) ---
   useEffect(() => {
     if (!isRunning) return;
     let raf: number | null = null;
@@ -240,33 +246,31 @@ export default function PrompterPage() {
     const s = steps[i];
     if (!s) return;
 
+    // --- VERIFY: pokazujemy i czekamy, brak auto-timera ---
     if (s.mode === "VERIFY") {
       setPhase("show");
       setDisplayText(s.target || "");
-      const dwell = Number(s.dwell_ms ?? 5000);
+      setIsSayCollect(false);
+      setSayEcho([]);
+      setSayCount(0);
       clearStepTimeout();
-      stepTimeoutRef.current = window.setTimeout(() => {
-        const next = (i + 1) % steps.length;
-        setIdx(next);
-        runStep(next);
-      }, dwell);
-    } else {
+      return;
+    }
+
+    // --- SAY: 5s prompt, potem zbieranie 3 zdań + echo ---
+    if (s.mode === "SAY") {
       const prep = Number(s.prep_ms ?? 5000);
-      const dwell = Number(s.dwell_ms ?? 45000);
-      sayBufferRef.current = "";
       setPhase("prep");
       setDisplayText(s.prompt || "");
+      setIsSayCollect(false);
+      setSayEcho([]);
+      setSayCount(0);
+
       clearStepTimeout();
       stepTimeoutRef.current = window.setTimeout(() => {
         setPhase("show");
-        setDisplayText(s.prompt || "");
-        clearStepTimeout();
-        stepTimeoutRef.current = window.setTimeout(() => {
-          const next = (i + 1) % steps.length;
-          setIdx(next);
-          sayBufferRef.current = "";
-          runStep(next);
-        }, dwell);
+        setDisplayText("");      // prompt znika
+        setIsSayCollect(true);   // zaczynamy zbierać
       }, prep);
     }
   }
@@ -275,32 +279,48 @@ export default function PrompterPage() {
   function handleTranscript(text: string) {
     const s = steps[idx];
     if (!s || !text) return;
+
+    // VERIFY: przejście dopiero przy ~80% zgodności
     if (s.mode === "VERIFY") {
       const score = coverage(text, s.target || "");
       const ok = score >= 0.8 && normalize(text).split(" ").length >= 3;
       if (ok) {
-        clearStepTimeout();
         const next = (idx + 1) % steps.length;
         setIdx(next);
         runStep(next);
       }
       return;
     }
-    if (s.mode === "SAY") {
-      sayBufferRef.current = (sayBufferRef.current + " " + text).trim();
-      setDisplayText(`${s.prompt || ""}\n\n${sayBufferRef.current}`);
-      const sentences = splitSentences(sayBufferRef.current);
-      let count = sentences.length;
+
+    // SAY: echo + licznik 1/2/3 z opcjonalną walidacją prefiksów
+    if (s.mode === "SAY" && isSayCollect) {
+      const prevJoined = sayEcho.join(" ");
+      const merged = (prevJoined + " " + text).trim();
+      const all = splitSentences(merged);
+
+      let filtered = all;
       if (s.starts_with?.length) {
-        count = sentences.filter(t => s.starts_with!.some(sw => normalize(t).startsWith(normalize(sw)))).length;
+        filtered = all.filter(t =>
+          s.starts_with!.some(sw => normalize(t).startsWith(normalize(sw)))
+        );
       } else if (s.starts_with_any?.length) {
-        count = sentences.filter(t => s.starts_with_any!.some(sw => normalize(t).startsWith(normalize(sw)))).length;
+        filtered = all.filter(t =>
+          s.starts_with_any!.some(sw => normalize(t).startsWith(normalize(sw)))
+        );
       }
-      if ((s.min_sentences ?? 3) <= count) {
-        clearStepTimeout();
+
+      if (filtered.length > sayCount) {
+        setSayCount(filtered.length);
+        setSayEcho(filtered.slice(0, 3));
+      }
+
+      const need = s.min_sentences ?? 3;
+      if (filtered.length >= need) {
         const next = (idx + 1) % steps.length;
         setIdx(next);
-        sayBufferRef.current = "";
+        setIsSayCollect(false);
+        setSayEcho([]);
+        setSayCount(0);
         runStep(next);
       }
     }
@@ -312,12 +332,14 @@ export default function PrompterPage() {
     setIsRunning(true);
     setRemaining(MAX_TIME);
     setIdx(0);
+
     timerRef.current = window.setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) { stopSession(); return 0; }
         return prev - 1;
       });
     }, 1000);
+
     runStep(0);
     startMic();
   };
@@ -328,6 +350,9 @@ export default function PrompterPage() {
     clearStepTimeout();
     stopMic();
     setLevelPct(0);
+    setIsSayCollect(false);
+    setSayEcho([]);
+    setSayCount(0);
   };
 
   const fmt = (s: number) =>
@@ -373,18 +398,30 @@ export default function PrompterPage() {
           </div>
         )}
 
+        {/* Tekst/echo podczas sesji */}
         {isRunning && (
-          <div className="overlay center">
-            <div key={idx} className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
-              {displayText || ""}
-            </div>
-
-            {steps[idx]?.mode === "SAY" && phase === "show" && steps[idx]?.note && (
-              <div className="mt-4 text-center opacity-70 text-sm">
-                {steps[idx].note}
+          steps[idx]?.mode === "SAY" && isSayCollect ? (
+            <div className="overlay center" style={{ textAlign: "center" }}>
+              <div style={{ fontSize: "72px", fontWeight: 700, lineHeight: 1 }}>
+                {Math.min(3, sayCount + 1)}
               </div>
-            )}
-          </div>
+              <div className="mt-4" style={{ whiteSpace: "pre-wrap" }}>
+                {sayEcho.join("\n")}
+              </div>
+            </div>
+          ) : (
+            <div className="overlay center">
+              <div key={idx} className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
+                {displayText || ""}
+              </div>
+
+              {steps[idx]?.mode === "SAY" && phase === "show" && steps[idx]?.note && (
+                <div className="mt-4 text-center opacity-70 text-sm">
+                  {steps[idx].note}
+                </div>
+              )}
+            </div>
+          )
         )}
 
         <div className="meter-vertical">
