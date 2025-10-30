@@ -99,6 +99,10 @@ export default function PrompterPage() {
   const [sayEcho, setSayEcho] = useState<string[]>([]);
   const [sayCount, setSayCount] = useState(0);
 
+  // --- VERIFY: licznik prób i anty-spam ---
+  const verifyFailRef = useRef(0);
+  const lastEvalRef = useRef(0);
+
   const timerRef = useRef<number | null>(null);
   const stepTimeoutRef = useRef<number | null>(null);
 
@@ -144,7 +148,7 @@ export default function PrompterPage() {
         const data = await res.json();
         if (data?.text) handleTranscript(data.text);
       } catch {
-        // ciche w MVP
+        // cicho w MVP
       }
 
       const rec = mediaRecorderRef.current;
@@ -246,18 +250,19 @@ export default function PrompterPage() {
     const s = steps[i];
     if (!s) return;
 
-    // --- VERIFY: pokazujemy i czekamy, brak auto-timera ---
+    // VERIFY: brak auto-timera — czekamy na powtórzenie (max 3 próby)
     if (s.mode === "VERIFY") {
       setPhase("show");
       setDisplayText(s.target || "");
       setIsSayCollect(false);
       setSayEcho([]);
       setSayCount(0);
+      verifyFailRef.current = 0;
       clearStepTimeout();
       return;
     }
 
-    // --- SAY: 5s prompt, potem zbieranie 3 zdań + echo ---
+    // SAY: 5s prompt, potem zbieranie 3 zdań + echo
     if (s.mode === "SAY") {
       const prep = Number(s.prep_ms ?? 5000);
       setPhase("prep");
@@ -280,22 +285,44 @@ export default function PrompterPage() {
     const s = steps[idx];
     if (!s || !text) return;
 
-    // VERIFY: przejście dopiero przy ~80% zgodności
+    // VERIFY: przejście dopiero przy ~70–80% zgodności, 3 próby, cooldown
     if (s.mode === "VERIFY") {
-      const score = coverage(text, s.target || "");
-      const ok = score >= 0.8 && normalize(text).split(" ").length >= 3;
+      const now = Date.now();
+      if (now - lastEvalRef.current < 1200) return; // anty-spam
+      lastEvalRef.current = now;
+
+      const target = s.target || "";
+      const wordsTarget = normalize(target).split(" ").filter(Boolean).length;
+      const minWords = Math.min(3, Math.max(1, wordsTarget));
+      const thresh = wordsTarget <= 3 ? 0.70 : 0.80;
+
+      const score = coverage(text, target);
+      const wordsSaid = normalize(text).split(" ").filter(Boolean).length;
+
+      const ok = score >= thresh && wordsSaid >= minWords;
+
       if (ok) {
         const next = (idx + 1) % steps.length;
         setIdx(next);
         runStep(next);
+      } else {
+        verifyFailRef.current += 1;
+        const tries = Math.min(verifyFailRef.current, 3);
+        // pokaż prośbę o powtórkę
+        setDisplayText(`${target}\n\nPowtórz proszę głośno (${tries}/3)…`);
+        if (verifyFailRef.current >= 3) {
+          const next = (idx + 1) % steps.length;
+          setIdx(next);
+          runStep(next);
+        }
       }
       return;
     }
 
     // SAY: echo + licznik 1/2/3 z opcjonalną walidacją prefiksów
     if (s.mode === "SAY" && isSayCollect) {
-      const prevJoined = sayEcho.join(" ");
-      const merged = (prevJoined + " " + text).trim();
+      const prev = sayEcho.join(" ");
+      const merged = (prev + " " + text).trim();
       const all = splitSentences(merged);
 
       let filtered = all;
@@ -353,6 +380,7 @@ export default function PrompterPage() {
     setIsSayCollect(false);
     setSayEcho([]);
     setSayCount(0);
+    verifyFailRef.current = 0;
   };
 
   const fmt = (s: number) =>
