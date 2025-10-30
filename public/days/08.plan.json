@@ -1,12 +1,15 @@
 {
   "day": "08",
   "steps": [
-    {
-      "mode": "SAY",
-      "prompt": "Powiedz, za co siebie szanujesz. Mów pełnym zdaniem, zaczynając od: 'Szanuję siebie za...'.",
-      "min_sentences": 3,
-      "starts_with": ["Szanuję siebie za"],
-      "note": "Mów powoli. Patrz na siebie z łagodnością. To ćwiczenie ma tylko jeden cel – usłyszeć własny głos."
-    }
+    { "mode": "SAY", "prompt": "Powiedz, za co siebie szanujesz. Zacznij od: 'Szanuję siebie za...'" },
+    { "mode": "SAY", "prompt": "Powiedz, za co siebie doceniasz. Zacznij od: 'Doceniam siebie za...'" },
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie podziwiasz. Zacznij od: 'Podziwiam siebie za...'" },
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie lubisz. Zacznij od: 'Lubię w sobie to, że...'" },
+    { "mode": "SAY", "prompt": "Powiedz, z czego jesteś dumny/dumna. Zacznij od: 'Jestem dumny/dumna z...'" },
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie chcesz pielęgnować. Zacznij od: 'Chcę pielęgnować w sobie...'" },
+    { "mode": "SAY", "prompt": "Powiedz, co udało Ci się dziś zrobić dobrze. Zacznij od: 'Dziś dobrze zrobiłem/zrobiłam to, że...'" },
+    { "mode": "SAY", "prompt": "Powiedz, co czyni Cię silnym/silną. Zacznij od: 'Czyni mnie silnym/silną to, że...'" },
+    { "mode": "SAY", "prompt": "Powiedz, w czym jesteś wyjątkowy/wyjątkowa. Zacznij od: 'Jestem wyjątkowy/wyjątkowa, bo...'" },
+    { "mode": "SAY", "prompt": "Powiedz, co chcesz w sobie zauważać częściej. Zacznij od: 'Chcę częściej zauważać w sobie...'" }
   ]
 }
