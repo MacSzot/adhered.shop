@@ -50,7 +50,7 @@ export default function PrompterPage() {
   const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? getParam("day", "01") : "01");
   const MAX_TIME = 6 * 60; // 6 minut
 
-  // Stany UI
+  // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
@@ -98,9 +98,9 @@ export default function PrompterPage() {
     })();
   }, []);
 
-  /* ---------- 2) Start/Stop AV + stabilny VAD ---------- */
+  /* ---------- 2) Start/Stop AV + VAD loop (niezależna od isRunning) ---------- */
   async function startAV(): Promise<boolean> {
-    stopAV(); // cleanup na wszelki wypadek
+    stopAV();
     setMicError(null);
 
     try {
@@ -121,7 +121,6 @@ export default function PrompterPage() {
       const ac = new Ctx();
       audioCtxRef.current = ac;
 
-      // Chrome/Safari czasem startują „suspended”
       if (ac.state === "suspended") {
         await ac.resume().catch(() => {});
         const resumeOnClick = () => ac.resume().catch(() => {});
@@ -134,43 +133,44 @@ export default function PrompterPage() {
       ac.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
 
+      // PĘTLA VAD – działa dopóki jest analyser (niezależnie od isRunning)
       const data = new Uint8Array(analyser.fftSize);
-      const tick = () => {
+      const loop = () => {
+        if (!analyserRef.current) return; // zakończ, gdy stop AV
         analyser.getByteTimeDomainData(data);
 
         // Peak + RMS
         let peak = 0, sumSq = 0;
         for (let i = 0; i < data.length; i++) {
-          const x = (data[i] - 128) / 128; // -1..1
+          const x = (data[i] - 128) / 128;
           const a = Math.abs(x);
           if (a > peak) peak = a;
           sumSq += x * x;
         }
         const rms = Math.sqrt(sumSq / data.length);
 
-        // Wskaźnik
         const vu = Math.min(100, peak * 440);
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // Prosta detekcja mowy (działa też na AirPods)
         const speaking = rms > 0.025 || peak > 0.06 || vu > 10;
-
         if (speaking) {
           setSpeakingBlink(true);
           if (isRunning && steps[idx]?.mode === "VERIFY") advanceAfterSpeakOnce();
           window.setTimeout(() => setSpeakingBlink(false), 160);
         }
 
-        if (isRunning) rafRef.current = requestAnimationFrame(tick);
+        rafRef.current = requestAnimationFrame(loop);
       };
+      rafRef.current = requestAnimationFrame(loop);
 
-      rafRef.current = requestAnimationFrame(tick);
       return true;
     } catch (err: any) {
       console.error("getUserMedia error:", err);
-      setMicError(err?.name === "NotAllowedError"
-        ? "Brak zgody na mikrofon/kamerę."
-        : "Nie udało się uruchomić mikrofonu/kamery.");
+      setMicError(
+        err?.name === "NotAllowedError"
+          ? "Brak zgody na mikrofon/kamerę."
+          : "Nie udało się uruchomić mikrofonu/kamery."
+      );
       return false;
     }
   }
@@ -204,11 +204,7 @@ export default function PrompterPage() {
 
     if (s.mode === "VERIFY") {
       setDisplayText(s.target || "");
-
-      // hint po 7 s ciszy
       silenceHintTimerRef.current = window.setTimeout(() => setShowSilenceHint(true), 7000);
-
-      // twardy limit 12 s, by nie zaciąć się przy problemie z mikrofonem
       hardCapTimerRef.current = window.setTimeout(() => gotoNext(i), 12000);
     } else {
       const prep = Number(s.prep_ms ?? 5000);
@@ -242,14 +238,13 @@ export default function PrompterPage() {
   const startSession = async () => {
     if (!steps.length) return;
 
-    // Najpierw AV — jeśli nie ruszy, NIC nie startuje
+    // najpierw AV; jeśli fail — nie startujemy nic dalej
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
     setIsRunning(true);
     setRemaining(MAX_TIME);
 
-    // licznik dopiero po AV
     sessionTimerRef.current = window.setInterval(() => {
       setRemaining(prev => {
         if (prev <= 1) { stopSession(); return 0; }
@@ -293,11 +288,9 @@ export default function PrompterPage() {
         </div>
       </header>
 
-      {/* licznik działa tylko po starcie AV */}
       <div className="timer-top timer-top--strong">{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
-        {/* Monitoring audio jest wyłączony (muted), żeby nie sprzęgało */}
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
         {!isRunning && (
@@ -321,7 +314,7 @@ export default function PrompterPage() {
               {displayText}
             </div>
 
-            {/* POD TEKSTEM — przyklejone na dół, wyśrodkowane */}
+            {/* POD TEKSTEM — dół, wyśrodkowany */}
             {showSilenceHint && (
               <div
                 style={{
