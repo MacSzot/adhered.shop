@@ -1,0 +1,12 @@
+{
+  "day": "08",
+  "steps": [
+    {
+      "mode": "SAY",
+      "prompt": "Powiedz, za co siebie szanujesz. Mów pełnym zdaniem, zaczynając od: 'Szanuję siebie za...'.",
+      "min_sentences": 3,
+      "starts_with": ["Szanuję siebie za"],
+      "note": "Mów powoli. Patrz na siebie z łagodnością. To ćwiczenie ma tylko jeden cel – usłyszeć własny głos."
+    }
+  ]
+}
