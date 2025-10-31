@@ -15,8 +15,6 @@
     { "mode": "VERIFY", "target": "Doceniam to, jak wiele już zostało zrobione." },
     { "mode": "VERIFY", "target": "Moje tempo jest wystarczające." },
     { "mode": "VERIFY", "target": "Uznaję swoją historię taką, jaka jest." },
-    { "mode": "VERIFY", "target": "Podziwiam sposób przetrwania trudnych chwil." },
-    { "mode": "VERIFY", "target": "Jest we mnie siła, która potrafi wracać." },
 
     {
       "mode": "SAY",
@@ -25,8 +23,6 @@
       "dwell_ms": 12000
     },
 
-    { "mode": "VERIFY", "target": "Szanuję wysiłek, który doprowadził mnie tutaj." },
-    { "mode": "VERIFY", "target": "Dobre słowo o sobie zaczyna brzmieć naturalnie." },
     { "mode": "VERIFY", "target": "Każdy dzień przynosi nowe zrozumienie." },
     { "mode": "VERIFY", "target": "Mam świadomość, że nie wszystko musi być naprawione." },
     { "mode": "VERIFY", "target": "Spokój staje się częścią mojej codzienności." },
@@ -94,3 +90,4 @@
     { "mode": "VERIFY", "target": "Każdy dzień przybliża mnie do siebie." }
   ]
 }
+
