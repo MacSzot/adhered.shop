@@ -49,10 +49,10 @@ export default function PrompterPage() {
   // Ustawienia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
-  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
+  const dayFileParam = dayRaw.padStart(2, "0"); // pliki: 01..11
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
-    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
+    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego (1,3,6…)
   })();
 
   const MAX_TIME = 6 * 60; // 6 minut
@@ -146,95 +146,6 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ================= WHISPER: utils & refs ================= */
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const transcribingRef = useRef(false);
-
-  function pickAudioMime(): string {
-    if (typeof MediaRecorder !== "undefined") {
-      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
-      if (MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
-      if (MediaRecorder.isTypeSupported("audio/mp4")) return "audio/mp4";
-      if (MediaRecorder.isTypeSupported("audio/ogg")) return "audio/ogg";
-    }
-    return "";
-  }
-
-  async function transcribeBlob(blob: Blob) {
-    try {
-      transcribingRef.current = true;
-      if (!sayTranscript) setSayTranscript("…");
-      const fd = new FormData();
-      // KLUCZ "audio" zgodny z backendem /api/whisper
-      fd.append("audio", blob, "clip.webm");
-
-      const r = await fetch("/api/whisper", { method: "POST", body: fd });
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(err?.error || `HTTP ${r.status}`);
-      }
-      const j = await r.json();
-      setSayTranscript(String(j?.text || "").trim());
-    } catch (e: any) {
-      console.error("transcribeBlob error:", e);
-      setSayTranscript("(transkrypcja niedostępna)");
-    } finally {
-      transcribingRef.current = false;
-    }
-  }
-
-  function startSayCapture() {
-    if (!streamRef.current) {
-      setSayTranscript("(brak aktywnego mikrofonu)");
-      return;
-    }
-    if (typeof MediaRecorder === "undefined") {
-      setSayTranscript("(nagrywanie niedostępne w tej przeglądarce)");
-      return;
-    }
-
-    try {
-      sayActiveRef.current = true;
-      setSayTranscript("");
-      chunksRef.current = [];
-
-      const mime = pickAudioMime();
-      const rec = new MediaRecorder(streamRef.current, mime ? { mimeType: mime } : undefined);
-      mediaRecorderRef.current = rec;
-
-      (rec as any).ondataavailable = (ev: any) => {
-        const data: Blob = ev?.data;
-        if (data && data.size > 0) chunksRef.current.push(data);
-      };
-
-      rec.onstop = async () => {
-        try {
-          const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
-          chunksRef.current = [];
-          // ZAWSZE transkrybujemy po zakończeniu SAY
-          await transcribeBlob(blob);
-        } catch (e) {
-          console.error("onstop/transcribe error:", e);
-        }
-      };
-
-      rec.start(); // nagrywamy cały okres SAY (bez timeslice)
-    } catch (e) {
-      console.error("startSayCapture error:", e);
-      setSayTranscript("(nagrywanie niedostępne)");
-    }
-  }
-
-  function stopSayCapture() {
-    try {
-      sayActiveRef.current = false;
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-        mediaRecorderRef.current.stop();
-      }
-    } catch {}
-  }
-
   /* ---- 2) Start/Stop AV ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
@@ -259,9 +170,9 @@ export default function PrompterPage() {
       audioCtxRef.current = ac;
 
       if (ac.state === "suspended") {
-        try { await ac.resume(); } catch {}
-        const onceWrapper = () => { ac.resume().catch(() => {}); document.removeEventListener("click", onceWrapper); };
-        document.addEventListener("click", onceWrapper, { once: true });
+        await ac.resume().catch(() => {});
+        const resumeOnClick = () => ac.resume().catch(() => {});
+        document.addEventListener("click", resumeOnClick, { once: true });
       }
 
       const analyser = ac.createAnalyser();
@@ -339,6 +250,118 @@ export default function PrompterPage() {
     }
   }
 
+  /* ============= WHISPER: utils & refs (AUDIO-ONLY) ============= */
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  let audioOnlyStreamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const transcribingRef = useRef(false);
+
+  function pickAudioMime(): string | undefined {
+    const prefs = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",   // iOS Safari
+      "audio/aac",
+      "audio/mpeg",
+      "audio/ogg",
+      "audio/wav",
+    ];
+    for (const m of prefs) {
+      if ((window as any).MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+    }
+    return undefined;
+  }
+
+  async function transcribeBlob(blob: Blob) {
+    if (transcribingRef.current) return;
+    transcribingRef.current = true;
+    try {
+      setSayTranscript("…"); // placeholder w trakcie requestu
+      const fd = new FormData();
+      fd.append("audio", blob, "say-audio");
+      const res = await fetch("/api/whisper", { method: "POST", body: fd });
+      const j = await res.json().catch(() => ({} as any));
+      console.log("[/api/whisper] status", res.status, j);
+      if (res.ok) {
+        setSayTranscript(j?.text || "");
+      } else {
+        setSayTranscript("(błąd transkrypcji)");
+      }
+    } catch (e) {
+      console.error("transcribeBlob error:", e);
+      setSayTranscript("(błąd połączenia)");
+    } finally {
+      transcribingRef.current = false;
+    }
+  }
+
+  function startSayCapture() {
+    try {
+      setSayTranscript("");
+      sayActiveRef.current = true;
+
+      if (!streamRef.current) {
+        setSayTranscript("(brak strumienia audio)");
+        return;
+      }
+
+      // >>> Audio-only stream z istniejącego streamu kamery+mikrofonu
+      const audioTracks = streamRef.current.getAudioTracks();
+      if (!audioTracks.length) {
+        setSayTranscript("(brak toru audio)");
+        return;
+      }
+      const audioOnly = new MediaStream([audioTracks[0]]);
+      audioOnlyStreamRef.current = audioOnly;
+
+      const mimeType = pickAudioMime();
+      console.log("[SAY] start, mime:", mimeType || "(domyślny)");
+      const rec = new MediaRecorder(audioOnly, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = rec;
+      chunksRef.current = [];
+
+      (rec as any).ondataavailable = (ev: any) => {
+        const data: Blob = ev?.data;
+        if (data && data.size > 0) chunksRef.current.push(data);
+      };
+
+      rec.onstop = async () => {
+        try {
+          const fileType = rec.mimeType || (mimeType || "audio/webm");
+          const blob = new Blob(chunksRef.current, { type: fileType });
+          chunksRef.current = [];
+          console.log("[SAY] stop, blob:", fileType, blob.size);
+          await transcribeBlob(blob);
+        } catch (e) {
+          console.error("onstop/transcribe error:", e);
+          setSayTranscript("(nagrywanie nie powiodło się)");
+        }
+      };
+
+      // na iOS Safari czasem lepiej wymusić timeslice, ale tu nagrywamy cały okres:
+      rec.start();
+    } catch (e) {
+      console.error("startSayCapture error:", e);
+      setSayTranscript("(nagrywanie niedostępne)");
+    }
+  }
+
+  function stopSayCapture() {
+    try {
+      sayActiveRef.current = false;
+      const rec = mediaRecorderRef.current;
+      if (rec && rec.state !== "inactive") {
+        console.log("[SAY] stopping recorder…");
+        rec.stop();
+      }
+    } catch {}
+    mediaRecorderRef.current = null;
+    if (audioOnlyStreamRef.current) {
+      audioOnlyStreamRef.current.getTracks().forEach(t => t.stop());
+      audioOnlyStreamRef.current = null;
+    }
+  }
+
   /* ---- 3) Timery + kroki ---- */
   function clearStepTimers() {
     [stepTimerRef, advanceTimerRef, silenceHintTimerRef, hardCapTimerRef].forEach(ref => {
@@ -356,7 +379,7 @@ export default function PrompterPage() {
     hardCapTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) {
         setShowSilenceHint(false);
-        stopSayCapture(); // bezpieczeństwo dla SAY
+        stopSayCapture(); // safety
         gotoNext(i);
       }
     }, HARD_CAP_MS);
@@ -373,7 +396,6 @@ export default function PrompterPage() {
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      setSayTranscript(""); // nic pod spodem
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
@@ -383,7 +405,7 @@ export default function PrompterPage() {
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // hint po 7s ciszy
+      // hint po 7 s tylko jeśli nadal cisza
       silenceHintTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) setShowSilenceHint(true);
       }, SILENCE_HINT_MS);
@@ -444,6 +466,7 @@ export default function PrompterPage() {
       <header className="topbar topbar--dense">
         <nav className="tabs">
           <a className="tab active" href="/day" aria-current="page">Prompter</a>
+          <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
         </nav>
         <div className="top-info compact">
           <span className="meta"><b>Użytkownik:</b> {USER_NAME}</span>
@@ -472,11 +495,9 @@ export default function PrompterPage() {
                 Twoja sesja potrwa około <b>6 minut</b>.<br />
                 Prosimy o <b>wyraźne powtarzanie</b> pojawiających się wyrazów.
               </p>
-
               <p style={{ marginTop: 10, fontSize: 15, opacity: 0.85 }}>
                 Aktywowano system analizy dźwięku <b>MeRoar™</b>
               </p>
-
               {micError && (
                 <p style={{ marginTop: 16, color: "#ffb3b3", fontSize: 14 }}>
                   {micError} — upewnij się, że przeglądarka ma dostęp do mikrofonu i kamery.
@@ -498,7 +519,7 @@ export default function PrompterPage() {
 
             {/* SAY = pytanie + transkrypt pod spodem + hint po 7 s */}
             {steps[idx]?.mode === "SAY" && (
-              <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
+              <div className="center-text fade" style={{ whiteSpace: "pre-wrap", position: "relative" }}>
                 <div style={{ fontSize: 18, lineHeight: 1.5, maxWidth: 700, margin: "0 auto" }}>
                   {displayText}
                 </div>
@@ -510,6 +531,7 @@ export default function PrompterPage() {
                     opacity: 0.96,
                     minHeight: 24,
                     textAlign: "center",
+                    wordBreak: "break-word",
                   }}
                 >
                   {sayTranscript}
@@ -521,12 +543,12 @@ export default function PrompterPage() {
                       position: "absolute",
                       left: 0,
                       right: 0,
-                      bottom: 56, // niżej, by nie nachodziło na pytanie
-                      padding: "0 24px",
+                      bottom: -8,
+                      padding: "8px 24px 0",
                       textAlign: "center",
-                      fontSize: 16,
+                      fontSize: 14,
                       lineHeight: 1.35,
-                      color: "rgba(255,255,255,0.95)",
+                      color: "rgba(255,255,255,0.9)",
                       textShadow: "0 1px 2px rgba(0,0,0,0.6)",
                       pointerEvents: "none",
                       transition: "opacity 200ms ease",
