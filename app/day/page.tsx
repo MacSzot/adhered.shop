@@ -50,24 +50,23 @@ export default function PrompterPage() {
   const DAY_LABEL = "Dzień " + ((typeof window !== "undefined") ? getParam("day", "01") : "01");
   const MAX_TIME = 6 * 60; // 6 minut
 
-  // Progi/czasy VAD
-  const SPEAKING_FRAMES_REQUIRED = 2;         // stabilizacja
-  const SILENCE_MS = 7000;                    // hint po 7 s
-  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // 4 s po pierwszym stabilnym głosie
+  // Tuning VAD / czasów
+  const SPEAKING_FRAMES_REQUIRED = 2;
+  const HINT_AFTER_MS = 7000;               // pokaż przypomnienie po 7 s ciszy
+  const HARD_CAP_MS   = 12000;              // auto advance po 12 s ciszy
+  const ADV_AFTER_SPEAK_MS = 4000;          // 4 s po pierwszym głosie
 
-  // Stany
+  // Stany UI
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
-
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
-
   const [micError, setMicError] = useState<string | null>(null);
 
-  // Hint (ref-bezpieczny)
+  // Hint (sterowany bez wyścigów)
   const [showSilenceHint, _setShowSilenceHint] = useState(false);
   const showSilenceHintRef = useRef(false);
   const setShowSilenceHint = (v: boolean) => { showSilenceHintRef.current = v; _setShowSilenceHint(v); };
@@ -100,29 +99,29 @@ export default function PrompterPage() {
   }
 
   /* ---------- Timery kroku / VAD ---------- */
-  const stepTimerRef = useRef<number | null>(null);     // SAY okna
-  const advanceTimerRef = useRef<number | null>(null);  // 4s po mówieniu
-  const rafRef = useRef<number | null>(null);
+  const stepTokenRef      = useRef<number>(0);      // unieważnia timery przy zmianie kroku
+  const speakAdvTimerRef  = useRef<number | null>(null); // 4 s po głosie
+  const hintTimerRef      = useRef<number | null>(null); // 7 s ciszy
+  const hardCapTimerRef   = useRef<number | null>(null); // 12 s ciszy
+  const rafRef            = useRef<number | null>(null);
 
   // AV
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
 
   // VAD pomocnicze
-  const heardThisStepRef = useRef(false);
-  const speakingFramesRef = useRef(0);
-  const lastSpeakTsRef = useRef<number>(0);
-  const stepTokenRef = useRef<number>(0);
+  const heardThisStepRef   = useRef(false);
+  const speakingFramesRef  = useRef(0);
 
-  // --- Nowe: automatyczna kalibracja tła ---
-  const noiseRmsRef = useRef(0.0);
-  const noisePeakRef = useRef(0.0);
+  // Kalibracja tła
+  const noiseRmsRef   = useRef(0.0);
+  const noisePeakRef  = useRef(0.0);
   const calibratingRef = useRef(true);
-  const calibUntilRef = useRef<number>(0);
+  const calibUntilRef  = useRef<number>(0);
   const calibAccRmsRef = useRef(0.0);
-  const calibAccPeakRef = useRef(0.0);
-  const calibNRef = useRef(0);
+  const calibAccPeakRef= useRef(0.0);
+  const calibNRef      = useRef(0);
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
@@ -207,63 +206,57 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // --- KALIBRACJA TŁA (pierwsze ~1.5 s) ---
         const now = performance.now();
+
+        // --- KALIBRACJA TŁA (pierwsze ~1.5 s) ---
         if (calibratingRef.current) {
-          calibAccRmsRef.current += rms;
+          calibAccRmsRef.current  += rms;
           calibAccPeakRef.current += peak;
-          calibNRef.current += 1;
+          calibNRef.current       += 1;
           if (now >= calibUntilRef.current) {
             const n = Math.max(1, calibNRef.current);
-            noiseRmsRef.current = Math.min(0.02, (calibAccRmsRef.current / n) || 0.0);   // clamp górny
-            noisePeakRef.current = Math.min(0.04, (calibAccPeakRef.current / n) || 0.0); // clamp górny
+            noiseRmsRef.current  = Math.min(0.02, (calibAccRmsRef.current  / n) || 0.0);
+            noisePeakRef.current = Math.min(0.04, (calibAccPeakRef.current / n) || 0.0);
             calibratingRef.current = false;
-            // zacznij liczyć ciszę od teraz
-            lastSpeakTsRef.current = now;
           }
-        } else {
-          // --- DETEKCJA MÓWIENIA względem tła (bardziej czuła) ---
-          const speakingNow =
-            (rms > noiseRmsRef.current * 1.6 + 0.004) ||
-            (peak > noisePeakRef.current * 1.45 + 0.018) ||
-            (vu > 6);
-
-          if (speakingNow) {
-            speakingFramesRef.current += 1;
-            if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
-              lastSpeakTsRef.current = now;
-              setSpeakingBlink(true);
-
-              const s = stepsRef.current[idxRef.current];
-              if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
-                heardThisStepRef.current = true;
-                setShowSilenceHint(false);
-
-                const token = stepTokenRef.current;
-                if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
-                advanceTimerRef.current = window.setTimeout(() => {
-                  if (token === stepTokenRef.current) {
-                    gotoNext(idxRef.current);
-                  }
-                }, ADVANCE_AFTER_FIRST_SPEAK_MS);
-              }
-            }
-          } else {
-            speakingFramesRef.current = 0;
-          }
-
-          // HINT po 7s ciszy od wejścia w krok / ostatniego głosu
-          const silentFor = now - lastSpeakTsRef.current;
-          const s = stepsRef.current[idxRef.current];
-          if (s?.mode === "VERIFY") {
-            if (silentFor >= SILENCE_MS && !showSilenceHintRef.current) setShowSilenceHint(true);
-            if (silentFor < SILENCE_MS && showSilenceHintRef.current) setShowSilenceHint(false);
-          } else if (showSilenceHintRef.current) {
-            setShowSilenceHint(false);
-          }
+          rafRef.current = requestAnimationFrame(loop);
+          return;
         }
 
-        window.setTimeout(() => setSpeakingBlink(false), 120);
+        // --- DETEKCJA MÓWIENIA względem tła ---
+        const speakingNow =
+          (rms  > noiseRmsRef.current  * 1.6 + 0.004) ||
+          (peak > noisePeakRef.current * 1.45 + 0.018) ||
+          (vu   > 6);
+
+        if (speakingNow) {
+          speakingFramesRef.current += 1;
+          if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
+            setSpeakingBlink(true);
+            window.setTimeout(() => setSpeakingBlink(false), 120);
+
+            const s = stepsRef.current[idxRef.current];
+            // tylko w VERIFY reagujemy na głos logiką przejścia
+            if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
+              heardThisStepRef.current = true;
+              setShowSilenceHint(false);
+
+              // zatrzymaj liczniki ciszy (7s / 12s)
+              if (hintTimerRef.current)   { window.clearTimeout(hintTimerRef.current); hintTimerRef.current = null; }
+              if (hardCapTimerRef.current){ window.clearTimeout(hardCapTimerRef.current); hardCapTimerRef.current = null; }
+
+              // ustaw 4 s do przejścia (token, by uniknąć wyścigów)
+              const token = stepTokenRef.current;
+              if (speakAdvTimerRef.current) { window.clearTimeout(speakAdvTimerRef.current); speakAdvTimerRef.current = null; }
+              speakAdvTimerRef.current = window.setTimeout(() => {
+                if (token === stepTokenRef.current) gotoNext(idxRef.current);
+              }, ADV_AFTER_SPEAK_MS);
+            }
+          }
+        } else {
+          speakingFramesRef.current = 0;
+        }
+
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
@@ -293,8 +286,9 @@ export default function PrompterPage() {
 
   /* ---- 3) Timery kroków ---- */
   function clearStepTimers() {
-    if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
-    if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
+    if (speakAdvTimerRef.current) { window.clearTimeout(speakAdvTimerRef.current); speakAdvTimerRef.current = null; }
+    if (hintTimerRef.current)     { window.clearTimeout(hintTimerRef.current); hintTimerRef.current = null; }
+    if (hardCapTimerRef.current)  { window.clearTimeout(hardCapTimerRef.current); hardCapTimerRef.current = null; }
   }
 
   function runStep(i: number) {
@@ -302,7 +296,7 @@ export default function PrompterPage() {
     const s = stepsRef.current[i];
     if (!s) return;
 
-    // „nowy” krok – unieważnij stare timery poprzez zwiększenie tokenu
+    // nowy krok
     stepTokenRef.current++;
     clearStepTimers();
     heardThisStepRef.current = false;
@@ -310,20 +304,36 @@ export default function PrompterPage() {
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      // od wejścia w krok liczymy ciszę (jeśli kalibracja już się skończyła, to nadpisz)
-      if (!calibratingRef.current) {
-        lastSpeakTsRef.current = performance.now();
-      }
       setDisplayText(s.target || "");
-      // VAD w pętli załatwia resztę (4 s po pierwszym głosie)
+
+      // ustaw timery ciszy (nie czekamy na VAD w pętli, tylko pewny zegar)
+      const token = stepTokenRef.current;
+      hintTimerRef.current = window.setTimeout(() => {
+        if (token === stepTokenRef.current && !heardThisStepRef.current) {
+          setShowSilenceHint(true); // po 7s ciszy
+        }
+      }, HINT_AFTER_MS);
+
+      hardCapTimerRef.current = window.setTimeout(() => {
+        if (token === stepTokenRef.current && !heardThisStepRef.current) {
+          setShowSilenceHint(false);
+          gotoNext(i); // po 12s ciszy wymuś przejście
+        }
+      }, HARD_CAP_MS);
+
+      // uwaga: przejście po głosie obsługuje pętla VAD (4 s po mówieniu)
     } else {
+      // SAY – bez zmian w tym trybie (okna czasowe)
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
       setDisplayText(s.prompt || "");
-      stepTimerRef.current = window.setTimeout(() => {
+      const token = stepTokenRef.current;
+      window.setTimeout(() => {
+        if (token !== stepTokenRef.current) return;
         setDisplayText(s.prompt || "");
-        stepTimerRef.current = window.setTimeout(() => {
-          if (idxRef.current === i) gotoNext(i);
+        window.setTimeout(() => {
+          if (token !== stepTokenRef.current) return;
+          gotoNext(i);
         }, dwell);
       }, prep);
     }
@@ -396,9 +406,9 @@ export default function PrompterPage() {
             <div className="intro">
               <h2>Teleprompter</h2>
               <p>
-                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.
-                Kroki <b>VERIFY</b> stoją w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przejdziemy dalej.
-                W ciszy pokażemy prośbę o powtórzenie <b>po 7 sekundach</b>.
+                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.<br/>
+                W trybie VERIFY: jeśli mówisz — przejdziemy dalej po <b>4 s</b>.  
+                Jeśli cisza — przypomnienie po <b>7 s</b>, a auto-przejście po <b>12 s</b>.
               </p>
               {micError && (
                 <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError} — sprawdź uprawnienia przeglądarki.</p>
@@ -413,7 +423,7 @@ export default function PrompterPage() {
               {displayText}
             </div>
 
-            {/* HINT POD TEKSTEM */}
+            {/* HINT POD TEKSTEM (na środku, poniżej zdania) */}
             {showSilenceHint && (
               <div
                 style={{
