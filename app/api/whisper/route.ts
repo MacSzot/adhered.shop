@@ -6,36 +6,32 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
+    // akceptujemy "audio" (front) oraz "file" (fallback)
+    const file = (formData.get("audio") || formData.get("file")) as File | null;
 
-    // 🔧 obsługa obu nazw pól — 'file' (desktop) i 'audio' (mobile)
-    let file = formData.get("file");
-    if (!file) file = formData.get("audio");
-
-    if (!file || !(file instanceof File)) {
+    if (!file) {
       return NextResponse.json({ error: "No audio file received" }, { status: 400 });
     }
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    // ✅ używamy najnowszego modelu transkrypcji (PL działa poprawnie)
-    const response = await openai.audio.transcriptions.create({
+    const resp = await openai.audio.transcriptions.create({
       file,
-      model: "gpt-4o-mini-transcribe", // szybki, nowy model
-      language: "pl", // wymusza polski
-      temperature: 0.2,
+      model: "gpt-4o-mini-transcribe", // lub: "whisper-1"
+      // language: "pl", // opcjonalnie, ale nie wymagane
+      // response_format: "json", // domyślnie json
     });
 
-    return NextResponse.json({ text: (response.text || "").trim() });
+    return NextResponse.json({ text: resp.text || "" });
   } catch (err: any) {
-    console.error("[/api/whisper] error:", err);
+    console.error("Whisper error:", err);
     return NextResponse.json(
-      { error: err.message || "Whisper failed" },
+      { error: err?.message || "Whisper failed" },
       { status: 500 }
     );
   }
 }
 
-// Prosty healthcheck endpoint
 export async function GET() {
   return NextResponse.json({ ok: true, service: "whisper" });
 }
