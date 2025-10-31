@@ -2,16 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 
-/* ================== Typy ================== */
+/* =============== Typy =============== */
 type PlanStep = {
   mode: "VERIFY" | "SAY";
   target?: string;   // VERIFY: tekst do powtórzenia
   prompt?: string;   // SAY: pytanie/komenda
-  prep_ms?: number;  // czas na przeczytanie pytania przed startem transkrypcji
-  dwell_ms?: number; // czas aktywnego okna SAY
+  prep_ms?: number;
+  dwell_ms?: number;
 };
 
-/* ================== Ładowanie planu ================== */
+/* =============== Ładowanie planu =============== */
 async function loadDayPlanOrTxt(dayFileParam: string): Promise<PlanStep[]> {
   try {
     const r = await fetch(`/days/${dayFileParam}.plan.json`, { cache: "no-store" });
@@ -26,16 +26,18 @@ async function loadDayPlanOrTxt(dayFileParam: string): Promise<PlanStep[]> {
   return txt.split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(line => ({ mode: "VERIFY" as const, target: line }));
 }
 
-/* ================== Helpers ================== */
+/* =============== Helpers =============== */
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
 
-/* ================== Strona ================== */
+/* =============== Strona =============== */
 export default function PrompterPage() {
-  /* --- stałe i parametry --- */
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Parametry dnia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "03") : "03";
   const dayFileParam = dayRaw.padStart(2, "0");
@@ -44,21 +46,17 @@ export default function PrompterPage() {
     return Number.isNaN(n) ? dayRaw : String(n);
   })();
 
+  // Czas i progi
   const MAX_TIME_S = 6 * 60;                // 6 minut
-  const SILENCE_HINT_MS = 7000;             // 7 s ciszy → przypomnienie
-  const HARD_CAP_MS = 12000;                // 12 s maks na krok
-  const VERIFY_NEXT_AFTER_VOICE_MS = 4000;  // VERIFY: 4 s po wykryciu głosu
+  const SILENCE_HINT_MS = 7000;             // 7 s ciszy
+  const HARD_CAP_MS = 12000;                // 12 s max na krok
+  const VERIFY_NEXT_AFTER_VOICE_MS = 4000;  // 4 s po głosie
 
-  // 3-stopniowy system przypomnień (zaktualizowany 1. komunikat)
-  const HINTS = [
-    "Jeśli możesz, postaraj się przeczytać na głos",
-    "Pamiętaj – to przestrzeń pełna szacunku do Ciebie.",
-    "Jeśli potrzebujesz chwili dla siebie, możesz wrócić później. Jeśli chcesz kontynuować, dotknij ekranu.",
-  ];
+  // Przypominajka: JEDNA na całą sesję
+  const REMINDER_TEXT = "Jeśli możesz, postaraj się przeczytać na głos";
+  const reminderShownRef = useRef(false);
 
-  /* --- referencje do elementów/stanów --- */
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-
+  // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
@@ -66,7 +64,10 @@ export default function PrompterPage() {
   const [remaining, setRemaining] = useState(MAX_TIME_S);
   const [micError, setMicError] = useState<string | null>(null);
 
-  // podgląd VU (opcjonalny)
+  // HINT (pojawia się max raz)
+  const [hint, setHint] = useState<string | null>(null);
+
+  // VU
   const [levelPct, setLevelPct] = useState(0);
 
   // SAY – live transcript
@@ -74,7 +75,7 @@ export default function PrompterPage() {
   const recognitionRef = useRef<any>(null);
   const sayActiveRef = useRef(false);
 
-  // VAD / audio
+  // AV / VAD
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -82,39 +83,36 @@ export default function PrompterPage() {
   const speakingFramesRef = useRef(0);
   const SPEAKING_FRAMES_REQUIRED = 2;
 
-  // stany i timery kroków
+  // Refy bieżących
   const isRunningRef = useRef(false);
   useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
   const idxRef = useRef(0);
   useEffect(() => { idxRef.current = idx; }, [idx]);
 
+  // Timery
   const stepTimerRef = useRef<number | null>(null);
   const advanceTimerRef = useRef<number | null>(null);
   const silenceHintTimerRef = useRef<number | null>(null);
   const hardCapTimerRef = useRef<number | null>(null);
 
-  // hinty (3 szt. na krok)
-  const [hint, setHint] = useState<string | null>(null);
-  const hintCountRef = useRef(0);
-  const requireTapToDismissRef = useRef(false);
-
-  // koniec sesji (overlay)
+  // Koniec sesji
   const [finished, setFinished] = useState(false);
 
-  /* --- ładowanie planu --- */
+  /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
     (async () => {
       const s = await loadDayPlanOrTxt(dayFileParam);
       setSteps(s);
       setIdx(0);
       const first = s[0];
-      setDisplayText(first?.mode === "SAY" ? (first.prompt || "") : (first?.target || ""));
+      setDisplayText(first?.mode === "SAY" ? (first?.prompt || "") : (first?.target || ""));
     })();
   }, []);
 
-  /* --- licznik 6 minut --- */
+  /* ---- 2) Licznik 6 min ---- */
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
+
   function startCountdown(seconds: number) {
     stopCountdown();
     endAtRef.current = Date.now() + seconds * 1000;
@@ -127,12 +125,12 @@ export default function PrompterPage() {
     }, 250);
   }
   function stopCountdown() {
-    if (countdownIdRef.current) window.clearInterval(countdownIdRef.current!);
+    if (countdownIdRef.current) window.clearInterval(countdownIdRef.current);
     countdownIdRef.current = null;
     endAtRef.current = null;
   }
 
-  /* --- AV start/stop --- */
+  /* ---- 3) AV + VAD ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
@@ -163,7 +161,7 @@ export default function PrompterPage() {
 
       const analyser = ac.createAnalyser();
       analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.86;
+      analyser.smoothingTimeConstant = 0.88;
       ac.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
 
@@ -180,20 +178,19 @@ export default function PrompterPage() {
           sumSq += x * x;
         }
         const rms = Math.sqrt(sumSq / data.length);
-        const vu = Math.min(100, peak * 480);
+        const vu = Math.min(100, peak * 520);             // trochę żywszy wskaźnik
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
+        // lekko niższe progi, by pewniej łapać szept
+        const speakingNow = (rms > 0.012) || (peak > 0.030) || (vu > 5);
         if (speakingNow) {
           speakingFramesRef.current += 1;
-          // usuwamy hint po głosie
+          // chowamy ewentualny hint
           if (hint) setHint(null);
-          requireTapToDismissRef.current = false;
 
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             const s = steps[idxRef.current];
             if (s?.mode === "VERIFY") {
-              // 4 s po głosie → next
               if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
               const thisIdx = idxRef.current;
               advanceTimerRef.current = window.setTimeout(() => {
@@ -229,17 +226,15 @@ export default function PrompterPage() {
     }
   }
 
-  /* --- SAY: rozpoznawanie mowy (fallback natychmiastowy) --- */
+  /* ---- 4) SAY (Web Speech API) ---- */
   function startSay() {
     sayActiveRef.current = true;
     setSayTranscript("");
-    stopSay(); // safety
+    stopSay();
 
     const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    if (!SR) {
-      console.warn("Web Speech API niedostępne w tej przeglądarce.");
-      return;
-    }
+    if (!SR) { console.warn("Web Speech API niedostępne."); return; }
+
     const rec = new SR();
     recognitionRef.current = rec;
     rec.lang = "pl-PL";
@@ -257,7 +252,7 @@ export default function PrompterPage() {
       const composed = (buffer + finalText + interim).trim();
       setSayTranscript(composed);
       if (finalText) buffer += finalText + " ";
-      if (composed) { setHint(null); requireTapToDismissRef.current = false; }
+      if (composed) setHint(null);
     };
     rec.onerror = (err: any) => console.warn("SpeechRecognition error:", err?.error || err);
     rec.onend = () => { if (sayActiveRef.current) { try { rec.start(); } catch {} } };
@@ -272,7 +267,7 @@ export default function PrompterPage() {
     recognitionRef.current = null;
   }
 
-  /* --- zarządzanie timerami --- */
+  /* ---- 5) Timery ---- */
   function clearTimers() {
     [stepTimerRef, advanceTimerRef, silenceHintTimerRef, hardCapTimerRef].forEach(ref => {
       if (ref.current) window.clearTimeout(ref.current);
@@ -281,35 +276,32 @@ export default function PrompterPage() {
   }
 
   function scheduleSilenceAndHard(i: number) {
-    // 7 s ciszy → przypomnienie (max 3 razy w jednym kroku)
-    if (silenceHintTimerRef.current) window.clearTimeout(silenceHintTimerRef.current);
-    silenceHintTimerRef.current = window.setTimeout(() => {
-      if (idxRef.current !== i) return;
-      if (hintCountRef.current < 3) {
-        setHint(HINTS[hintCountRef.current]);
-        hintCountRef.current += 1;
-        requireTapToDismissRef.current = hintCountRef.current >= 3; // przy 3. wymagamy tapnięcia
-      }
-    }, SILENCE_HINT_MS);
+    // Jednorazowa przypominajka dla całej sesji
+    if (!reminderShownRef.current) {
+      if (silenceHintTimerRef.current) window.clearTimeout(silenceHintTimerRef.current);
+      silenceHintTimerRef.current = window.setTimeout(() => {
+        if (idxRef.current === i && !reminderShownRef.current) {
+          setHint(REMINDER_TEXT);
+          reminderShownRef.current = true;
+        }
+      }, SILENCE_HINT_MS);
+    }
 
-    // 12 s twardy limit kroku
+    // Twardy limit kroku
     if (hardCapTimerRef.current) window.clearTimeout(hardCapTimerRef.current);
     hardCapTimerRef.current = window.setTimeout(() => {
       if (idxRef.current !== i) return;
       setHint(null);
-      requireTapToDismissRef.current = false;
       stopSay();
       gotoNext(i);
     }, HARD_CAP_MS);
   }
 
-  /* --- przebieg kroków --- */
+  /* ---- 6) Kroki ---- */
   function runStep(i: number) {
     if (!steps.length) return;
     clearTimers();
     setHint(null);
-    hintCountRef.current = 0;
-    requireTapToDismissRef.current = false;
     setSayTranscript("");
 
     const s = steps[i];
@@ -324,12 +316,11 @@ export default function PrompterPage() {
       const dwell = Number(s.dwell_ms ?? 12000);
       stopSay();
       setDisplayText(s.prompt || "");
-      scheduleSilenceAndHard(i); // zanim wystartuje recognition też liczymy ciszę
+      scheduleSilenceAndHard(i);
 
       stepTimerRef.current = window.setTimeout(() => {
         if (idxRef.current !== i) return;
         startSay();
-        // po dwell kończymy SAY i idziemy dalej
         stepTimerRef.current = window.setTimeout(() => {
           if (idxRef.current !== i) return;
           stopSay();
@@ -351,13 +342,15 @@ export default function PrompterPage() {
     runStep(next);
   }
 
-  /* --- Start/Stop sesji --- */
+  /* ---- 7) Start/Stop sesji ---- */
   const startSession = async () => {
     if (!steps.length) return;
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
     setIsRunning(true);
     setFinished(false);
+    setHint(null);
+    reminderShownRef.current = false; // reset „jednego” hintu na nową sesję
     startCountdown(MAX_TIME_S);
     setIdx(0);
     setDisplayText(steps[0]?.mode === "SAY" ? (steps[0]?.prompt || "") : (steps[0]?.target || ""));
@@ -365,7 +358,6 @@ export default function PrompterPage() {
   };
 
   function hardFinishSession() {
-    // natychmiast kończymy krok + sesję
     clearTimers();
     stopSay();
     stopAV();
@@ -382,10 +374,10 @@ export default function PrompterPage() {
     setIsRunning(false);
   };
 
-  /* --- UI: format czasu --- */
+  /* ---- UI helpers ---- */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-  /* --- UI style --- */
+  /* ---- Style ---- */
   const centerWrap: React.CSSProperties = {
     position: "absolute",
     top: "50%",
@@ -406,33 +398,18 @@ export default function PrompterPage() {
   const sayQuestionStyle: React.CSSProperties = {
     fontSize: 20,
     lineHeight: 1.5,
-    marginBottom: 12,
+    marginBottom: 10,
   };
+  // Transkrypt: czysty biały tekst, bez tła
   const sayTranscriptStyle: React.CSSProperties = {
-    fontSize: 18,
-    minHeight: 32,
-    padding: "8px 10px",
-    background: "rgba(0,0,0,0.28)",
-    borderRadius: 10,
-    display: "inline-block",
-    maxWidth: "100%",
-  };
-  const hintStyle: React.CSSProperties = {
-    position: "fixed",
-    left: "50%",
-    transform: "translateX(-50%)",
-    bottom: 70,
-    width: "min(92vw, 820px)",
-    textAlign: "center",
-    color: "rgba(255,255,255,0.96)",
-    textShadow: "0 2px 6px rgba(0,0,0,0.6)",
-    zIndex: 20,
-    fontSize: 16,
-    lineHeight: 1.35,
-    padding: "0 12px",
+    fontSize: 20,
+    lineHeight: 1.45,
+    color: "#fff",
+    textShadow: "0 2px 8px rgba(0,0,0,0.75)",
+    minHeight: 28,
+    whiteSpace: "pre-wrap",
   };
 
-  /* --- Render --- */
   return (
     <main className="prompter-full">
       <header className="topbar topbar--dense">
@@ -454,14 +431,14 @@ export default function PrompterPage() {
         </div>
       </header>
 
-      {/* Zegar: FIXED, stabilny środek ekranu (nie „idzie do góry”) */}
+      {/* ZEGAR: na górze, gdzie „zawsze był” */}
       {isRunning && (
         <div style={{
           position: "fixed",
-          top: "50%",
+          top: 92,                  // pod topbarem; dostosuj jeśli potrzeba
           left: "50%",
-          transform: "translate(-50%, -50%)",
-          fontSize: 64,
+          transform: "translateX(-50%)",
+          fontSize: 58,
           fontWeight: 800,
           color: "white",
           textShadow: "0 2px 10px rgba(0,0,0,0.75)",
@@ -475,22 +452,18 @@ export default function PrompterPage() {
       <div className="stage mirrored">
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
-        {/* INTRO */}
+        {/* INTRO (bez dodatkowych napisów, bo grafika idzie na dole; zostawiamy tylko błąd mic jeśli jest) */}
         {!isRunning && !finished && (
           <div className="overlay center">
-            <div style={centerWrap}>
-              <div style={{ fontSize: 18, lineHeight: 1.6 }}>
-                Twoja sesja potrwa około <b>6 minut</b>.<br />
-                Postaraj się <b>wyraźnie powtarzać</b> wyświetlane treści.
+            {micError && (
+              <div style={{ 
+                position: "absolute", left: "50%", top: "50%",
+                transform: "translate(-50%, -50%)",
+                color: "#ffb3b3", fontSize: 14, textAlign: "center"
+              }}>
+                {micError}
               </div>
-              {micError && (
-                <p style={{ marginTop: 16, color: "#ffb3b3", fontSize: 14 }}>
-                  {micError}
-                </p>
-              )}
-            </div>
-
-            {/* obrazek na dole: mniejszy, bez przycinania */}
+            )}
             <img
               src="/assets/meroar-supervised.png"
               alt="Supervised by MeRoar & adhered."
@@ -511,7 +484,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* KONIEC SESJI */}
+        {/* KONIEC */}
         {finished && (
           <div className="overlay center" onClick={() => setFinished(false)}>
             <div style={centerWrap}>
@@ -523,7 +496,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* Overlay z treściami kroków */}
+        {/* Overlay kroków */}
         {isRunning && !finished && (
           <>
             <div style={centerWrap}>
@@ -538,23 +511,27 @@ export default function PrompterPage() {
               )}
             </div>
 
-            {/* HINT (3-stopniowy). Przy 3-cim – wymagamy tapnięcia, by zniknął */}
+            {/* JEDNORAZOWA przypominajka */}
             {hint && (
               <div
-                style={hintStyle}
-                onClick={() => {
-                  if (requireTapToDismissRef.current) {
-                    setHint(null);
-                    requireTapToDismissRef.current = false;
-                  }
+                style={{
+                  position: "fixed",
+                  left: "50%", transform: "translateX(-50%)",
+                  bottom: 70,
+                  width: "min(92vw, 820px)",
+                  textAlign: "center",
+                  color: "rgba(255,255,255,0.96)",
+                  textShadow: "0 2px 6px rgba(0,0,0,0.6)",
+                  zIndex: 20,
+                  fontSize: 16, lineHeight: 1.35, padding: "0 12px",
                 }}
               >
                 {hint}
               </div>
             )}
 
-            {/* VU paskowy (opcjonalny) */}
-            <div className="meter-vertical">
+            {/* VU-meter (po prawej) */}
+            <div className="meter-vertical" style={{ zIndex: 21 }}>
               <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
             </div>
           </>
