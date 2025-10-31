@@ -16,11 +16,12 @@ export async function POST(req: NextRequest) {
 
     const resp = await openai.audio.transcriptions.create({
       file,
-      model: "gpt-4o-mini-transcribe",
-      // alternatywnie: model: "whisper-1"
+      model: "gpt-4o-mini-transcribe", // możesz zmienić na "whisper-1"
+      // language: "pl", // (opcjonalnie)
+      // response_format: "json", // (domyślne)
     });
 
-    return NextResponse.json({ text: resp.text || "" });
+    return NextResponse.json({ text: resp.text ?? "" });
   } catch (err: any) {
     console.error("Whisper error:", err);
     return NextResponse.json({ error: err?.message || "Whisper failed" }, { status: 500 });
