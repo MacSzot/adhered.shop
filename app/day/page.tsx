@@ -49,7 +49,7 @@ export default function PrompterPage() {
   // Ustawienia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
-  const dayFileParam = dayRaw.padStart(2, "0"); // pliki zawsze 01..11
+  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
     return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
@@ -59,9 +59,9 @@ export default function PrompterPage() {
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_HINT_MS = 7000;   // hint po 7 s ciszy
-  const HARD_CAP_MS = 12000;      // auto-next po 12 s (VERIFY i SAY)
-  const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: 4 s po mowie
+  const SILENCE_HINT_MS = 3000;    // HINT po 3 s
+  const HARD_CAP_MS = 8000;        // auto-next po 8 s ciszy (VERIFY/SAY)
+  const ADVANCE_AFTER_SPEAK_MS = 1500; // VERIFY: 1.5 s po mowie
 
   // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -77,7 +77,7 @@ export default function PrompterPage() {
   const setShowSilenceHint = (v: boolean) => { showSilenceHintRef.current = v; _setShowSilenceHint(v); };
   const [speakingBlink, setSpeakingBlink] = useState(false);
 
-  // SAY – transkrypt pod pytaniem
+  // Transkrypcja (SAY)
   const [sayTranscript, setSayTranscript] = useState<string>("");
   const sayActiveRef = useRef(false);
 
@@ -205,7 +205,6 @@ export default function PrompterPage() {
             setSpeakingBlink(true);
             const s = stepsRef.current[idxRef.current];
 
-            // VERIFY: przy pierwszym głosie uruchom 4s do next
             if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               setShowSilenceHint(false);
@@ -218,10 +217,7 @@ export default function PrompterPage() {
               }, ADVANCE_AFTER_SPEAK_MS);
             }
 
-            // SAY: pierwszy głos gasi hint (nie wraca w tym kroku)
-            if (s?.mode === "SAY") {
-              setShowSilenceHint(false);
-            }
+            if (s?.mode === "SAY") setShowSilenceHint(false);
           }
         } else {
           speakingFramesRef.current = 0;
@@ -250,85 +246,100 @@ export default function PrompterPage() {
     }
   }
 
-  /* ======= WHISPER: MediaRecorder + chunk upload ======= */
-  const recRef = useRef<MediaRecorder | null>(null);
-  const sendTimerRef = useRef<number | null>(null);
-  const chunkRef = useRef<Blob[]>([]);
+  /* ===== WHISPER front: MediaRecorder + fallback Web Speech ===== */
+  const mediaRecRef = useRef<MediaRecorder | null>(null);
+  const recStopperRef = useRef<(() => void) | null>(null);
+  const speechRecRef = useRef<any>(null); // webkitSpeechRecognition
 
-  function pickMime(): string | undefined {
-    const MR: any = (window as any).MediaRecorder;
-    if (!MR || !MR.isTypeSupported) return undefined;
-    if (MR.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
-    if (MR.isTypeSupported("audio/webm")) return "audio/webm";
-    if (MR.isTypeSupported("audio/mp4")) return "audio/mp4"; // iOS fallback
-    return undefined;
-  }
-
-  async function postChunk(blob: Blob) {
+  async function uploadChunkToWhisper(blob: Blob) {
     try {
       const fd = new FormData();
-      fd.append("file", blob, "clip." + (blob.type.includes("mp4") ? "m4a" : "webm"));
+      // Podajemy rozsądny filename + typ.
+      const file = new File([blob], "chunk.webm", { type: blob.type || "audio/webm" });
+      fd.append("file", file);
       const r = await fetch("/api/whisper", { method: "POST", body: fd });
-      if (!r.ok) return;
       const j = await r.json();
-      if (typeof j?.text === "string") {
-        setSayTranscript(t => j.text || t);
+      if (j?.text) {
+        setSayTranscript(prev => (prev ? prev + " " : "") + j.text.trim());
       }
-    } catch {}
+    } catch (e) {
+      console.warn("Whisper chunk failed:", e);
+    }
   }
 
   function startSayCapture() {
     sayActiveRef.current = true;
     setSayTranscript("");
 
-    const stream = streamRef.current;
-    if (!stream) return;
+    // 1) MediaRecorder → wysyłka co 2s
+    if (streamRef.current && "MediaRecorder" in window) {
+      try {
+        let mime =
+          MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+            ? "audio/webm;codecs=opus"
+            : MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : "";
 
-    const mime = pickMime();
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    recRef.current = rec;
-    chunkRef.current = [];
+        const rec = new MediaRecorder(streamRef.current, mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : undefined);
+        mediaRecRef.current = rec;
 
-    rec.ondataavailable = (e: BlobEvent) => {
-      if (e.data && e.data.size > 0) chunkRef.current.push(e.data);
+        rec.ondataavailable = async (ev) => {
+          if (!sayActiveRef.current) return;
+          if (ev.data && ev.data.size > 1024) {
+            await uploadChunkToWhisper(ev.data);
+          }
+        };
+
+        rec.start(2000); // co 2 sekundy chunk
+        recStopperRef.current = () => { try { rec.stop(); } catch {} };
+      } catch (e) {
+        console.warn("MediaRecorder failed, fallback to Web Speech", e);
+        startWebSpeech();
+      }
+      return;
+    }
+
+    // 2) Fallback — Web Speech API (iOS Safari itp.)
+    startWebSpeech();
+  }
+
+  function startWebSpeech() {
+    // @ts-ignore
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+
+    const sr = new SR();
+    speechRecRef.current = sr;
+    sr.lang = "pl-PL";
+    sr.interimResults = true;
+    sr.continuous = true;
+
+    sr.onresult = (e: any) => {
+      let interim = "";
+      let finalTxt = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) finalTxt += res[0].transcript;
+        else interim += res[0].transcript;
+      }
+      if (finalTxt) setSayTranscript(prev => (prev ? prev + " " : "") + finalTxt.trim());
+      if (interim) setSayTranscript(prev => prev + " " + interim.trim());
     };
 
-    rec.start(1000); // porcje ~1s
-
-    if (sendTimerRef.current) window.clearInterval(sendTimerRef.current);
-    sendTimerRef.current = window.setInterval(() => {
-      if (!sayActiveRef.current) return;
-      if (!chunkRef.current.length) return;
-      const blob = new Blob(chunkRef.current, { type: rec.mimeType || "audio/webm" });
-      chunkRef.current = [];
-      postChunk(blob);
-    }, 1200);
+    try { sr.start(); } catch {}
   }
 
   function stopSayCapture() {
     sayActiveRef.current = false;
 
-    if (sendTimerRef.current) {
-      window.clearInterval(sendTimerRef.current);
-      sendTimerRef.current = null;
-    }
-    const rec = recRef.current;
-    recRef.current = null;
+    if (recStopperRef.current) { try { recStopperRef.current(); } catch {} }
+    mediaRecRef.current = null;
+    recStopperRef.current = null;
 
-    const flush = async () => {
-      if (chunkRef.current.length) {
-        const blob = new Blob(chunkRef.current, { type: (rec && (rec as any).mimeType) || "audio/webm" });
-        chunkRef.current = [];
-        await postChunk(blob);
-      }
-    };
-
-    if (rec && rec.state !== "inactive") {
-      rec.onstop = flush;
-      try { rec.stop(); } catch { flush(); }
-    } else {
-      flush();
-    }
+    const sr = speechRecRef.current;
+    if (sr) { try { sr.stop(); } catch {} }
+    speechRecRef.current = null;
   }
 
   /* ---- 3) Timery + kroki ---- */
@@ -340,15 +351,13 @@ export default function PrompterPage() {
   }
 
   function scheduleSilenceTimers(i: number) {
-    // 7 s → pokaż hint (VERIFY lub SAY)
     silenceHintTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) setShowSilenceHint(true);
     }, SILENCE_HINT_MS);
-    // 12 s → wymuś przejście (VERIFY lub SAY)
     hardCapTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) {
         setShowSilenceHint(false);
-        stopSayCapture(); // safety dla SAY
+        stopSayCapture();
         gotoNext(i);
       }
     }, HARD_CAP_MS);
@@ -368,23 +377,20 @@ export default function PrompterPage() {
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
-      const prep = Number(s.prep_ms ?? 1000);    // 1s na przeczytanie pytania
-      const dwell = Number(s.dwell_ms ?? 8000);  // 8s aktywnego okna
+      const prep = Number(s.prep_ms ?? 500);    // szybkie wejście
+      const dwell = Number(s.dwell_ms ?? 15000);
 
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // hint po 7s ciszy (jeśli nadal cisza)
       silenceHintTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) setShowSilenceHint(true);
       }, SILENCE_HINT_MS);
 
-      // po prep_ms start nasłuchu/transkrypcji
       stepTimerRef.current = window.setTimeout(() => {
         if (idxRef.current !== i) return;
         startSayCapture();
 
-        // po dwell_ms kończymy SAY i przechodzimy dalej
         stepTimerRef.current = window.setTimeout(() => {
           if (idxRef.current !== i) return;
           stopSayCapture();
@@ -398,7 +404,7 @@ export default function PrompterPage() {
   function gotoNext(i: number) {
     clearStepTimers();
     setShowSilenceHint(false);
-    stopSayCapture(); // safety
+    stopSayCapture();
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
     const n = stepsRef.current[next];
@@ -481,14 +487,14 @@ export default function PrompterPage() {
         {/* OVERLAY SESJI */}
         {isRunning && (
           <div className="overlay center">
-            {/* VERIFY = tekst do powtórzenia */}
+            {/* VERIFY */}
             {steps[idx]?.mode === "VERIFY" && (
               <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
                 {displayText}
               </div>
             )}
 
-            {/* SAY = pytanie + transkrypt pod spodem + hint po 7 s */}
+            {/* SAY */}
             {steps[idx]?.mode === "SAY" && (
               <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
                 <div style={{ fontSize: 18, lineHeight: 1.5, maxWidth: 700, margin: "0 auto" }}>
