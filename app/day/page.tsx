@@ -15,17 +15,17 @@ type PlanStep = {
   note?: string;
 };
 
-async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
+async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
   try {
-    const r = await fetch(`/days/${day}.plan.json`, { cache: "no-store" });
+    const r = await fetch(`/days/${dayFileParam}.plan.json`, { cache: "no-store" });
     if (r.ok) {
       const j = await r.json();
       const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
       if (steps.length) return { source: "json", steps };
     }
   } catch {}
-  const r2 = await fetch(`/days/${day}.txt`, { cache: "no-store" });
-  if (!r2.ok) throw new Error(`Brak pliku dnia: ${day}.plan.json i ${day}.txt`);
+  const r2 = await fetch(`/days/${dayFileParam}.txt`, { cache: "no-store" });
+  if (!r2.ok) throw new Error(`Brak pliku dnia: ${dayFileParam}.plan.json i ${dayFileParam}.txt`);
   const txt = await r2.text();
   const steps: PlanStep[] = txt
     .split(/\r?\n/)
@@ -48,18 +48,20 @@ export default function PrompterPage() {
 
   // Ustawienia
   const USER_NAME = "demo";
-  const dayParam = typeof window !== "undefined" ? getParam("day", "01") : "01";
+  const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
+  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
   const DAY_LABEL = (() => {
-    const n = parseInt(dayParam, 10);
-    return Number.isNaN(n) ? dayParam : String(n);
+    const n = parseInt(dayRaw, 10);
+    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
   })();
+
   const MAX_TIME = 6 * 60; // 6 minut
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_HINT_MS = 7000;
-  const HARD_CAP_MS = 12000;
-  const ADVANCE_AFTER_SPEAK_MS = 4000;
+  const SILENCE_HINT_MS = 7000;  // hint po 7 s ciszy
+  const HARD_CAP_MS = 12000;     // auto-next po 12 s (VERIFY i SAY)
+  const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: 4 s po mowie
 
   // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -74,6 +76,10 @@ export default function PrompterPage() {
   const showSilenceHintRef = useRef(false);
   const setShowSilenceHint = (v: boolean) => { showSilenceHintRef.current = v; _setShowSilenceHint(v); };
   const [speakingBlink, setSpeakingBlink] = useState(false);
+
+  // SAY – transkrypt pod pytaniem
+  const [sayTranscript, setSayTranscript] = useState<string>("");
+  const sayActiveRef = useRef(false);
 
   // Refy aktualnych wartości
   const isRunningRef = useRef(isRunning);
@@ -123,14 +129,13 @@ export default function PrompterPage() {
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
-    const day = dayParam;
     (async () => {
       try {
-        const { source, steps } = await loadDayPlanOrTxt(day);
+        const { source, steps } = await loadDayPlanOrTxt(dayFileParam);
         setSteps(steps);
         setIdx(0);
         setDisplayText(steps[0]?.mode === "VERIFY" ? (steps[0].target || "") : (steps[0]?.prompt || ""));
-        console.log(`[DAY ${day}] source:`, source, `steps: ${steps.length}`);
+        console.log(`[DAY ${dayFileParam}] source:`, source, `steps: ${steps.length}`);
       } catch (e) {
         console.error(e);
         const fallback = [{ mode: "VERIFY" as const, target: "Brak treści dla tego dnia." }];
@@ -138,6 +143,7 @@ export default function PrompterPage() {
         setDisplayText(fallback[0].target!);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* ---- 2) Start/Stop AV ---- */
@@ -195,9 +201,11 @@ export default function PrompterPage() {
         const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
         if (speakingNow) {
           speakingFramesRef.current += 1;
-          if (speakingFramesRef.current >= 2) {
+          if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             setSpeakingBlink(true);
             const s = stepsRef.current[idxRef.current];
+
+            // VERIFY: przy pierwszym głosie uruchom 4s do next
             if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               setShowSilenceHint(false);
@@ -207,10 +215,17 @@ export default function PrompterPage() {
               if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
               advanceTimerRef.current = window.setTimeout(() => {
                 if (idxRef.current === thisIdx) gotoNext(thisIdx);
-              }, 4000);
+              }, ADVANCE_AFTER_SPEAK_MS);
+            }
+
+            // SAY: pierwszy głos gasi hint (nie wraca w tym kroku)
+            if (s?.mode === "SAY") {
+              setShowSilenceHint(false);
             }
           }
-        } else speakingFramesRef.current = 0;
+        } else {
+          speakingFramesRef.current = 0;
+        }
 
         window.setTimeout(() => setSpeakingBlink(false), 120);
         rafRef.current = requestAnimationFrame(loop);
@@ -235,6 +250,21 @@ export default function PrompterPage() {
     }
   }
 
+  /* ===== SAY: hooki do transkrypcji (front Whisper – opcjonalnie) ===== */
+  function startSayCapture() {
+    sayActiveRef.current = true;
+    setSayTranscript("");
+    // Podłącz tu swój moduł Whisper, jeżeli jest dostępny:
+    // (window as any).__whisperStart?.({
+    //   onPartial: (t: string) => setSayTranscript(t),
+    //   onFinal:   (t: string) => setSayTranscript(t),
+    // });
+  }
+  function stopSayCapture() {
+    sayActiveRef.current = false;
+    // (window as any).__whisperStop?.();
+  }
+
   /* ---- 3) Timery + kroki ---- */
   function clearStepTimers() {
     [stepTimerRef, advanceTimerRef, silenceHintTimerRef, hardCapTimerRef].forEach(ref => {
@@ -244,12 +274,18 @@ export default function PrompterPage() {
   }
 
   function scheduleSilenceTimers(i: number) {
+    // 7 s → pokaż hint (VERIFY lub SAY)
     silenceHintTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) setShowSilenceHint(true);
-    }, 7000);
+    }, SILENCE_HINT_MS);
+    // 12 s → wymuś przejście (VERIFY lub SAY)
     hardCapTimerRef.current = window.setTimeout(() => {
-      if (idxRef.current === i) { setShowSilenceHint(false); gotoNext(i); }
-    }, 12000);
+      if (idxRef.current === i) {
+        setShowSilenceHint(false);
+        stopSayCapture(); // bezpieczeństwo dla SAY
+        gotoNext(i);
+      }
+    }, HARD_CAP_MS);
   }
 
   function runStep(i: number) {
@@ -266,12 +302,29 @@ export default function PrompterPage() {
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
-      const prep = Number(s.prep_ms ?? 5000);
-      const dwell = Number(s.dwell_ms ?? 45000);
+      const prep = Number(s.prep_ms ?? 2000);    // 2s na przeczytanie pytania
+      const dwell = Number(s.dwell_ms ?? 12000); // 12s aktywnego okna
+
       setDisplayText(s.prompt || "");
+      setSayTranscript("");
+
+      // 7s → pokaż hint (jeśli nadal cisza)
+      silenceHintTimerRef.current = window.setTimeout(() => {
+        if (idxRef.current === i) setShowSilenceHint(true);
+      }, SILENCE_HINT_MS);
+
+      // po prep_ms start nasłuchu/transkrypcji
       stepTimerRef.current = window.setTimeout(() => {
-        setDisplayText(s.prompt || "");
-        stepTimerRef.current = window.setTimeout(() => { if (idxRef.current === i) gotoNext(i); }, dwell);
+        if (idxRef.current !== i) return;
+        startSayCapture();
+
+        // po dwell_ms kończymy SAY i przechodzimy dalej
+        stepTimerRef.current = window.setTimeout(() => {
+          if (idxRef.current !== i) return;
+          stopSayCapture();
+          setShowSilenceHint(false);
+          gotoNext(i);
+        }, dwell);
       }, prep);
     }
   }
@@ -279,8 +332,11 @@ export default function PrompterPage() {
   function gotoNext(i: number) {
     clearStepTimers();
     setShowSilenceHint(false);
+    stopSayCapture(); // safety
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
+    const n = stepsRef.current[next];
+    setDisplayText(n?.mode === "VERIFY" ? (n?.target || "") : (n?.prompt || ""));
     runStep(next);
   }
 
@@ -292,6 +348,7 @@ export default function PrompterPage() {
     setIsRunning(true);
     startCountdown(MAX_TIME);
     setIdx(0);
+    setDisplayText(stepsRef.current[0]?.mode === "VERIFY" ? (stepsRef.current[0].target || "") : (stepsRef.current[0]?.prompt || ""));
     runStep(0);
   };
 
@@ -299,6 +356,7 @@ export default function PrompterPage() {
     setIsRunning(false);
     stopCountdown();
     clearStepTimers();
+    stopSayCapture();
     stopAV();
     setLevelPct(0);
   };
@@ -332,6 +390,7 @@ export default function PrompterPage() {
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
+        {/* OVERLAY START */}
         {!isRunning && (
           <div className="overlay center">
             <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6 }}>
@@ -353,34 +412,61 @@ export default function PrompterPage() {
           </div>
         )}
 
+        {/* OVERLAY SESJI */}
         {isRunning && (
           <div className="overlay center">
-            <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
-              {displayText}
-            </div>
+            {/* VERIFY = tekst do powtórzenia */}
+            {steps[idx]?.mode === "VERIFY" && (
+              <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
+                {displayText}
+              </div>
+            )}
 
-            {showSilenceHint && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: 72,
-                  padding: "0 24px",
-                  textAlign: "center",
-                  fontSize: 16,
-                  lineHeight: 1.35,
-                  color: "rgba(255,255,255,0.95)",
-                  textShadow: "0 1px 2px rgba(0,0,0,0.6)",
-                  pointerEvents: "none",
-                }}
-              >
-                Czy możesz powtórzyć na głos?
+            {/* SAY = pytanie + transkrypt pod spodem + hint po 7 s */}
+            {steps[idx]?.mode === "SAY" && (
+              <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
+                <div style={{ fontSize: 18, lineHeight: 1.5, maxWidth: 700, margin: "0 auto" }}>
+                  {displayText}
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 16,
+                    fontSize: 17,
+                    opacity: 0.96,
+                    minHeight: 24,
+                    textAlign: "center",
+                  }}
+                >
+                  {sayTranscript}
+                </div>
+
+                {showSilenceHint && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      bottom: 72,
+                      padding: "0 24px",
+                      textAlign: "center",
+                      fontSize: 16,
+                      lineHeight: 1.35,
+                      color: "rgba(255,255,255,0.95)",
+                      textShadow: "0 1px 2px rgba(0,0,0,0.6)",
+                      pointerEvents: "none",
+                      transition: "opacity 200ms ease",
+                    }}
+                  >
+                    Czy możesz powiedzieć coś na głos?
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
 
+        {/* VU-meter */}
         <div className="meter-vertical">
           <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
           {speakingBlink && (
