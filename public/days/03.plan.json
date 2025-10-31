@@ -7,7 +7,7 @@
 
     {
       "mode": "SAY",
-      "prompt": "A teraz popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — twoje słowa wyświetlą się na ekranie.",
+      "prompt": "A teraz popatrz sobie w oczy i PODZIĘKUJ SOBIE. Zrób to ze spokojem — twoje słowa wyświetlą się na ekranie.",
       "prep_ms": 2500,
       "dwell_ms": 12000
     },
@@ -20,7 +20,7 @@
 
     {
       "mode": "SAY",
-      "prompt": "A teraz popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — twoje słowa wyświetlą się na ekranie.",
+      "prompt": "A teraz popatrz na siebie i PRZYZNAJ SOBIE RACJE. Zrób to z przekonaniem — twoje słowa wyświetlą się na ekranie.",
       "prep_ms": 2500,
       "dwell_ms": 12000
     },
@@ -33,7 +33,7 @@
 
     {
       "mode": "SAY",
-      "prompt": "A teraz popatrz na siebie i pogratuluj sobie. Zrób to z radością — twoje słowa wyświetlą się na ekranie.",
+      "prompt": "A teraz popatrz na siebie i POGRATULUJ SOBIE. Zrób to z radością — twoje słowa wyświetlą się na ekranie.",
       "prep_ms": 2500,
       "dwell_ms": 12000
     },
@@ -49,7 +49,7 @@
 
     {
       "mode": "SAY",
-      "prompt": "A teraz popatrz na siebie i powiedz coś, z czego naprawdę jesteś dumny. Zrób to z czułością — twoje słowa wyświetlą się na ekranie.",
+      "prompt": "A teraz popatrz sobie w oczy i powiedz, że CZUJESZ DUMĘ. Zrób to z czułością — twoje słowa wyświetlą się na ekranie.",
       "prep_ms": 2500,
       "dwell_ms": 12000
     },
