@@ -52,16 +52,16 @@ export default function PrompterPage() {
   const dayFileParam = dayRaw.padStart(2, "0"); // pliki zawsze 01..11
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
-    return Number.isNaN(n) ? dayRaw : String(n); // UI bez zera wiodącego
+    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
   })();
 
   const MAX_TIME = 6 * 60; // 6 minut
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_HINT_MS = 7000;
-  const HARD_CAP_MS = 12000;
-  const ADVANCE_AFTER_SPEAK_MS = 4000;
+  const SILENCE_HINT_MS = 7000;   // hint po 7 s ciszy
+  const HARD_CAP_MS = 12000;      // auto-next po 12 s (VERIFY i SAY)
+  const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: 4 s po mowie
 
   // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -77,7 +77,7 @@ export default function PrompterPage() {
   const setShowSilenceHint = (v: boolean) => { showSilenceHintRef.current = v; _setShowSilenceHint(v); };
   const [speakingBlink, setSpeakingBlink] = useState(false);
 
-  // SAY – transkrypt live
+  // SAY – transkrypt pod pytaniem
   const [sayTranscript, setSayTranscript] = useState<string>("");
   const sayActiveRef = useRef(false);
 
@@ -127,67 +127,6 @@ export default function PrompterPage() {
   const heardThisStepRef = useRef(false);
   const speakingFramesRef = useRef(0);
 
-  // ====== MediaRecorder (Whisper) ======
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunkTimerRef = useRef<number | null>(null);
-
-  async function postChunk(blob: Blob) {
-    try {
-      const fd = new FormData();
-      const file = new File([blob], `chunk.webm`, { type: blob.type || "audio/webm" });
-      fd.append("file", file);
-      const r = await fetch("/api/whisper", { method: "POST", body: fd });
-      if (!r.ok) return;
-      const j = await r.json();
-      const t = (j?.text || "").trim();
-      if (t) {
-        setSayTranscript(prev => prev ? `${prev} ${t}` : t);
-      }
-    } catch (e) {
-      // cisza – nie blokujemy sesji
-      console.warn("Whisper chunk error:", e);
-    }
-  }
-
-  function startSayCapture() {
-    if (!streamRef.current) return;
-    if (typeof (window as any).MediaRecorder === "undefined") {
-      setMicError("Ta przeglądarka nie obsługuje nagrywania audio (MediaRecorder).");
-      return;
-    }
-
-    try {
-      const rec = new MediaRecorder(streamRef.current, {
-        mimeType: "audio/webm;codecs=opus"
-      });
-      recorderRef.current = rec;
-      setSayTranscript("");
-      sayActiveRef.current = true;
-
-      rec.ondataavailable = (ev: BlobEvent) => {
-        if (!sayActiveRef.current) return;
-        if (ev.data && ev.data.size > 1024) {
-          postChunk(ev.data);
-        }
-      };
-      rec.start(1500); // co ~1.5 s dostajemy fragment i wysyłamy do /api/whisper
-    } catch (e) {
-      console.error("MediaRecorder init error:", e);
-      setMicError("Nie udało się uruchomić nagrywania audio.");
-    }
-  }
-
-  function stopSayCapture() {
-    sayActiveRef.current = false;
-    if (recorderRef.current) {
-      try {
-        if (recorderRef.current.state !== "inactive") recorderRef.current.stop();
-      } catch {} 
-    }
-    recorderRef.current = null;
-    if (chunkTimerRef.current) { window.clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; }
-  }
-
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
     (async () => {
@@ -207,7 +146,7 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---- 2) Start/Stop AV + VAD ---- */
+  /* ---- 2) Start/Stop AV ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
@@ -247,7 +186,6 @@ export default function PrompterPage() {
         if (!analyserRef.current || !isRunningRef.current) return;
         analyser.getByteTimeDomainData(data);
 
-        // Peak + RMS
         let peak = 0, sumSq = 0;
         for (let i = 0; i < data.length; i++) {
           const x = (data[i] - 128) / 128;
@@ -260,16 +198,14 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // Czułość – delikatnie wyższa, odporna na szum
         const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
-
         if (speakingNow) {
           speakingFramesRef.current += 1;
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             setSpeakingBlink(true);
             const s = stepsRef.current[idxRef.current];
 
-            // VERIFY: przy pierwszym głosie – 4 s do next
+            // VERIFY: przy pierwszym głosie uruchom 4s do next
             if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               setShowSilenceHint(false);
@@ -282,7 +218,7 @@ export default function PrompterPage() {
               }, ADVANCE_AFTER_SPEAK_MS);
             }
 
-            // SAY: pierwszy głos gasi hint
+            // SAY: pierwszy głos gasi hint (nie wraca w tym kroku)
             if (s?.mode === "SAY") {
               setShowSilenceHint(false);
             }
@@ -314,6 +250,87 @@ export default function PrompterPage() {
     }
   }
 
+  /* ======= WHISPER: MediaRecorder + chunk upload ======= */
+  const recRef = useRef<MediaRecorder | null>(null);
+  const sendTimerRef = useRef<number | null>(null);
+  const chunkRef = useRef<Blob[]>([]);
+
+  function pickMime(): string | undefined {
+    const MR: any = (window as any).MediaRecorder;
+    if (!MR || !MR.isTypeSupported) return undefined;
+    if (MR.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
+    if (MR.isTypeSupported("audio/webm")) return "audio/webm";
+    if (MR.isTypeSupported("audio/mp4")) return "audio/mp4"; // iOS fallback
+    return undefined;
+  }
+
+  async function postChunk(blob: Blob) {
+    try {
+      const fd = new FormData();
+      fd.append("file", blob, "clip." + (blob.type.includes("mp4") ? "m4a" : "webm"));
+      const r = await fetch("/api/whisper", { method: "POST", body: fd });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (typeof j?.text === "string") {
+        setSayTranscript(t => j.text || t);
+      }
+    } catch {}
+  }
+
+  function startSayCapture() {
+    sayActiveRef.current = true;
+    setSayTranscript("");
+
+    const stream = streamRef.current;
+    if (!stream) return;
+
+    const mime = pickMime();
+    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recRef.current = rec;
+    chunkRef.current = [];
+
+    rec.ondataavailable = (e: BlobEvent) => {
+      if (e.data && e.data.size > 0) chunkRef.current.push(e.data);
+    };
+
+    rec.start(1000); // porcje ~1s
+
+    if (sendTimerRef.current) window.clearInterval(sendTimerRef.current);
+    sendTimerRef.current = window.setInterval(() => {
+      if (!sayActiveRef.current) return;
+      if (!chunkRef.current.length) return;
+      const blob = new Blob(chunkRef.current, { type: rec.mimeType || "audio/webm" });
+      chunkRef.current = [];
+      postChunk(blob);
+    }, 1200);
+  }
+
+  function stopSayCapture() {
+    sayActiveRef.current = false;
+
+    if (sendTimerRef.current) {
+      window.clearInterval(sendTimerRef.current);
+      sendTimerRef.current = null;
+    }
+    const rec = recRef.current;
+    recRef.current = null;
+
+    const flush = async () => {
+      if (chunkRef.current.length) {
+        const blob = new Blob(chunkRef.current, { type: (rec && (rec as any).mimeType) || "audio/webm" });
+        chunkRef.current = [];
+        await postChunk(blob);
+      }
+    };
+
+    if (rec && rec.state !== "inactive") {
+      rec.onstop = flush;
+      try { rec.stop(); } catch { flush(); }
+    } else {
+      flush();
+    }
+  }
+
   /* ---- 3) Timery + kroki ---- */
   function clearStepTimers() {
     [stepTimerRef, advanceTimerRef, silenceHintTimerRef, hardCapTimerRef].forEach(ref => {
@@ -323,16 +340,15 @@ export default function PrompterPage() {
   }
 
   function scheduleSilenceTimers(i: number) {
-    // 7 s → hint
+    // 7 s → pokaż hint (VERIFY lub SAY)
     silenceHintTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) setShowSilenceHint(true);
     }, SILENCE_HINT_MS);
-
-    // 12 s → auto-next
+    // 12 s → wymuś przejście (VERIFY lub SAY)
     hardCapTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) {
         setShowSilenceHint(false);
-        stopSayCapture(); // tylko na wszelki wypadek
+        stopSayCapture(); // safety dla SAY
         gotoNext(i);
       }
     }, HARD_CAP_MS);
@@ -352,24 +368,23 @@ export default function PrompterPage() {
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
-      // SAY
-      const prep = Number(s.prep_ms ?? 2000);    // 2 s na przeczytanie
-      const dwell = Number(s.dwell_ms ?? 12000); // okno 12 s
+      const prep = Number(s.prep_ms ?? 1000);    // 1s na przeczytanie pytania
+      const dwell = Number(s.dwell_ms ?? 8000);  // 8s aktywnego okna
 
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // hint (po 7 s ciszy)
+      // hint po 7s ciszy (jeśli nadal cisza)
       silenceHintTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) setShowSilenceHint(true);
       }, SILENCE_HINT_MS);
 
-      // po prep_ms – start nagrywania i wysyłki chunków
+      // po prep_ms start nasłuchu/transkrypcji
       stepTimerRef.current = window.setTimeout(() => {
         if (idxRef.current !== i) return;
         startSayCapture();
 
-        // po dwell_ms – stop nagrywania i next
+        // po dwell_ms kończymy SAY i przechodzimy dalej
         stepTimerRef.current = window.setTimeout(() => {
           if (idxRef.current !== i) return;
           stopSayCapture();
@@ -449,9 +464,11 @@ export default function PrompterPage() {
                 Twoja sesja potrwa około <b>6 minut</b>.<br />
                 Prosimy o <b>wyraźne powtarzanie</b> pojawiających się wyrazów.
               </p>
+
               <p style={{ marginTop: 10, fontSize: 15, opacity: 0.85 }}>
                 Aktywowano system analizy dźwięku <b>MeRoar™</b>
               </p>
+
               {micError && (
                 <p style={{ marginTop: 16, color: "#ffb3b3", fontSize: 14 }}>
                   {micError} — upewnij się, że przeglądarka ma dostęp do mikrofonu i kamery.
@@ -471,7 +488,7 @@ export default function PrompterPage() {
               </div>
             )}
 
-            {/* SAY = pytanie + transkrypt live + hint po 7 s */}
+            {/* SAY = pytanie + transkrypt pod spodem + hint po 7 s */}
             {steps[idx]?.mode === "SAY" && (
               <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
                 <div style={{ fontSize: 18, lineHeight: 1.5, maxWidth: 700, margin: "0 auto" }}>
