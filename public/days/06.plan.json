@@ -1,0 +1,20 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Mam do siebie bardzo duży szacunek." },
+    { "mode": "VERIFY", "target": "Dziękuję sobie za bycie odważnym człowiekiem." },
+    { "mode": "VERIFY", "target": "Podziwiam swoją odwagę coraz bardziej." },
+
+    {
+      "mode": "SAY",
+      "prompt": "Wymień cechę, z której jesteś najbardziej dumny. Bądź dla siebie dobry — to, co powiesz, pojawi się na ekranie.",
+      "prep_ms": 2000,
+      "dwell_ms": 12000
+    },
+    {
+      "mode": "SAY",
+      "prompt": "Powiedz o jednym osiągnięciu, z którego jesteś dumny. To, co powiesz, pojawi się na ekranie.",
+      "prep_ms": 2000,
+      "dwell_ms": 12000
+    }
+  ]
+}
