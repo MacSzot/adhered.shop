@@ -59,8 +59,8 @@ export default function PrompterPage() {
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_HINT_MS = 7000;  // hint po 7 s ciszy
-  const HARD_CAP_MS = 12000;     // auto-next po 12 s (VERIFY i SAY)
+  const SILENCE_HINT_MS = 7000;   // hint po 7 s ciszy
+  const HARD_CAP_MS = 12000;      // auto-next po 12 s (VERIFY i SAY)
   const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: 4 s po mowie
 
   // Stany
@@ -146,6 +146,95 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ================= WHISPER: utils & refs ================= */
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const transcribingRef = useRef(false);
+
+  function pickAudioMime(): string {
+    if (typeof MediaRecorder !== "undefined") {
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
+      if (MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
+      if (MediaRecorder.isTypeSupported("audio/mp4")) return "audio/mp4";
+      if (MediaRecorder.isTypeSupported("audio/ogg")) return "audio/ogg";
+    }
+    return "";
+  }
+
+  async function transcribeBlob(blob: Blob) {
+    try {
+      transcribingRef.current = true;
+      if (!sayTranscript) setSayTranscript("…");
+      const fd = new FormData();
+      // KLUCZ "audio" zgodny z backendem /api/whisper
+      fd.append("audio", blob, "clip.webm");
+
+      const r = await fetch("/api/whisper", { method: "POST", body: fd });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${r.status}`);
+      }
+      const j = await r.json();
+      setSayTranscript(String(j?.text || "").trim());
+    } catch (e: any) {
+      console.error("transcribeBlob error:", e);
+      setSayTranscript("(transkrypcja niedostępna)");
+    } finally {
+      transcribingRef.current = false;
+    }
+  }
+
+  function startSayCapture() {
+    if (!streamRef.current) {
+      setSayTranscript("(brak aktywnego mikrofonu)");
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      setSayTranscript("(nagrywanie niedostępne w tej przeglądarce)");
+      return;
+    }
+
+    try {
+      sayActiveRef.current = true;
+      setSayTranscript("");
+      chunksRef.current = [];
+
+      const mime = pickAudioMime();
+      const rec = new MediaRecorder(streamRef.current, mime ? { mimeType: mime } : undefined);
+      mediaRecorderRef.current = rec;
+
+      (rec as any).ondataavailable = (ev: any) => {
+        const data: Blob = ev?.data;
+        if (data && data.size > 0) chunksRef.current.push(data);
+      };
+
+      rec.onstop = async () => {
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+          chunksRef.current = [];
+          // ZAWSZE transkrybujemy po zakończeniu SAY
+          await transcribeBlob(blob);
+        } catch (e) {
+          console.error("onstop/transcribe error:", e);
+        }
+      };
+
+      rec.start(); // nagrywamy cały okres SAY (bez timeslice)
+    } catch (e) {
+      console.error("startSayCapture error:", e);
+      setSayTranscript("(nagrywanie niedostępne)");
+    }
+  }
+
+  function stopSayCapture() {
+    try {
+      sayActiveRef.current = false;
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+    } catch {}
+  }
+
   /* ---- 2) Start/Stop AV ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
@@ -170,9 +259,9 @@ export default function PrompterPage() {
       audioCtxRef.current = ac;
 
       if (ac.state === "suspended") {
-        await ac.resume().catch(() => {});
-        const resumeOnClick = () => ac.resume().catch(() => {});
-        document.addEventListener("click", resumeOnClick, { once: true });
+        try { await ac.resume(); } catch {}
+        const onceWrapper = () => { ac.resume().catch(() => {}); document.removeEventListener("click", onceWrapper); };
+        document.addEventListener("click", onceWrapper, { once: true });
       }
 
       const analyser = ac.createAnalyser();
@@ -250,21 +339,6 @@ export default function PrompterPage() {
     }
   }
 
-  /* ===== SAY: hooki do transkrypcji (front Whisper – opcjonalnie) ===== */
-  function startSayCapture() {
-    sayActiveRef.current = true;
-    setSayTranscript("");
-    // Podłącz tu swój moduł Whisper, jeżeli jest dostępny:
-    // (window as any).__whisperStart?.({
-    //   onPartial: (t: string) => setSayTranscript(t),
-    //   onFinal:   (t: string) => setSayTranscript(t),
-    // });
-  }
-  function stopSayCapture() {
-    sayActiveRef.current = false;
-    // (window as any).__whisperStop?.();
-  }
-
   /* ---- 3) Timery + kroki ---- */
   function clearStepTimers() {
     [stepTimerRef, advanceTimerRef, silenceHintTimerRef, hardCapTimerRef].forEach(ref => {
@@ -299,6 +373,7 @@ export default function PrompterPage() {
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
+      setSayTranscript(""); // nic pod spodem
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
@@ -308,7 +383,7 @@ export default function PrompterPage() {
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // 7s → pokaż hint (jeśli nadal cisza)
+      // hint po 7s ciszy
       silenceHintTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) setShowSilenceHint(true);
       }, SILENCE_HINT_MS);
@@ -369,7 +444,6 @@ export default function PrompterPage() {
       <header className="topbar topbar--dense">
         <nav className="tabs">
           <a className="tab active" href="/day" aria-current="page">Prompter</a>
-          <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
         </nav>
         <div className="top-info compact">
           <span className="meta"><b>Użytkownik:</b> {USER_NAME}</span>
@@ -447,7 +521,7 @@ export default function PrompterPage() {
                       position: "absolute",
                       left: 0,
                       right: 0,
-                      bottom: 72,
+                      bottom: 56, // niżej, by nie nachodziło na pytanie
                       padding: "0 24px",
                       textAlign: "center",
                       fontSize: 16,
