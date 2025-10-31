@@ -6,10 +6,9 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
-    // akceptujemy "audio" (front) oraz "file" (fallback)
-    const file = (formData.get("audio") || formData.get("file")) as File | null;
+    const file = formData.get("file");
 
-    if (!file) {
+    if (!file || !(file instanceof File)) {
       return NextResponse.json({ error: "No audio file received" }, { status: 400 });
     }
 
@@ -17,22 +16,17 @@ export async function POST(req: NextRequest) {
 
     const resp = await openai.audio.transcriptions.create({
       file,
-      model: "gpt-4o-mini-transcribe", // lub: "whisper-1"
-      // language: "pl", // opcjonalnie, ale nie wymagane
-      // response_format: "json", // domyślnie json
+      model: "gpt-4o-mini-transcribe",
+      // alternatywnie: model: "whisper-1"
     });
 
     return NextResponse.json({ text: resp.text || "" });
   } catch (err: any) {
     console.error("Whisper error:", err);
-    return NextResponse.json(
-      { error: err?.message || "Whisper failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err?.message || "Whisper failed" }, { status: 500 });
   }
 }
 
 export async function GET() {
   return NextResponse.json({ ok: true, service: "whisper" });
 }
-
