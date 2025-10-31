@@ -1,18 +1,9 @@
 {
   "steps": [
     { "mode": "VERIFY", "target": "Mam do siebie bardzo duży szacunek." },
-    { "mode": "VERIFY", "target": "Dziękuję sobie za bycie odważnym człowiekiem." },
-    { "mode": "VERIFY", "target": "Podziwiam swoją odwagę coraz bardziej." },
-
-    { "mode": "SAY",
-      "prompt": "Wymień cechę, z której jesteś najbardziej dumny. To, co powiesz pojawi się na ekranie.",
-      "prep_ms": 1000,
-      "dwell_ms": 8000
-    },
-    { "mode": "SAY",
-      "prompt": "Powiedz jedno osiągnięcie, z którego jesteś dumny.",
-      "prep_ms": 1000,
-      "dwell_ms": 8000
-    }
+    { "mode": "VERIFY", "target": "Dziękuję sobie za odwagę." },
+    { "mode": "VERIFY", "target": "Podziwiam moją odwagę coraz bardziej." },
+    { "mode": "SAY", "prompt": "Wymień cechę, z której jesteś dumny. To, co powiesz, pokaże się na ekranie.", "prep_ms": 1000, "dwell_ms": 12000 },
+    { "mode": "SAY", "prompt": "Wymień osiągnięcie, z którego jesteś dumny.", "prep_ms": 1000, "dwell_ms": 12000 }
   ]
 }
