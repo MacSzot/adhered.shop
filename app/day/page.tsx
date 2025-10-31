@@ -49,19 +49,19 @@ export default function PrompterPage() {
   // Ustawienia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
-  const dayFileParam = dayRaw.padStart(2, "0"); // pliki: 01..11
+  const dayFileParam = dayRaw.padStart(2, "0"); // pliki zawsze 01..11
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
-    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego (1,3,6…)
+    return Number.isNaN(n) ? dayRaw : String(n); // UI bez zera wiodącego
   })();
 
   const MAX_TIME = 6 * 60; // 6 minut
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_HINT_MS = 7000;   // hint po 7 s ciszy
-  const HARD_CAP_MS = 12000;      // auto-next po 12 s (VERIFY i SAY)
-  const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: 4 s po mowie
+  const SILENCE_HINT_MS = 7000;
+  const HARD_CAP_MS = 12000;
+  const ADVANCE_AFTER_SPEAK_MS = 4000;
 
   // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -77,7 +77,7 @@ export default function PrompterPage() {
   const setShowSilenceHint = (v: boolean) => { showSilenceHintRef.current = v; _setShowSilenceHint(v); };
   const [speakingBlink, setSpeakingBlink] = useState(false);
 
-  // SAY – transkrypt pod pytaniem
+  // SAY – transkrypt live
   const [sayTranscript, setSayTranscript] = useState<string>("");
   const sayActiveRef = useRef(false);
 
@@ -127,6 +127,67 @@ export default function PrompterPage() {
   const heardThisStepRef = useRef(false);
   const speakingFramesRef = useRef(0);
 
+  // ====== MediaRecorder (Whisper) ======
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunkTimerRef = useRef<number | null>(null);
+
+  async function postChunk(blob: Blob) {
+    try {
+      const fd = new FormData();
+      const file = new File([blob], `chunk.webm`, { type: blob.type || "audio/webm" });
+      fd.append("file", file);
+      const r = await fetch("/api/whisper", { method: "POST", body: fd });
+      if (!r.ok) return;
+      const j = await r.json();
+      const t = (j?.text || "").trim();
+      if (t) {
+        setSayTranscript(prev => prev ? `${prev} ${t}` : t);
+      }
+    } catch (e) {
+      // cisza – nie blokujemy sesji
+      console.warn("Whisper chunk error:", e);
+    }
+  }
+
+  function startSayCapture() {
+    if (!streamRef.current) return;
+    if (typeof (window as any).MediaRecorder === "undefined") {
+      setMicError("Ta przeglądarka nie obsługuje nagrywania audio (MediaRecorder).");
+      return;
+    }
+
+    try {
+      const rec = new MediaRecorder(streamRef.current, {
+        mimeType: "audio/webm;codecs=opus"
+      });
+      recorderRef.current = rec;
+      setSayTranscript("");
+      sayActiveRef.current = true;
+
+      rec.ondataavailable = (ev: BlobEvent) => {
+        if (!sayActiveRef.current) return;
+        if (ev.data && ev.data.size > 1024) {
+          postChunk(ev.data);
+        }
+      };
+      rec.start(1500); // co ~1.5 s dostajemy fragment i wysyłamy do /api/whisper
+    } catch (e) {
+      console.error("MediaRecorder init error:", e);
+      setMicError("Nie udało się uruchomić nagrywania audio.");
+    }
+  }
+
+  function stopSayCapture() {
+    sayActiveRef.current = false;
+    if (recorderRef.current) {
+      try {
+        if (recorderRef.current.state !== "inactive") recorderRef.current.stop();
+      } catch {} 
+    }
+    recorderRef.current = null;
+    if (chunkTimerRef.current) { window.clearTimeout(chunkTimerRef.current); chunkTimerRef.current = null; }
+  }
+
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
     (async () => {
@@ -146,7 +207,7 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---- 2) Start/Stop AV ---- */
+  /* ---- 2) Start/Stop AV + VAD ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
@@ -186,6 +247,7 @@ export default function PrompterPage() {
         if (!analyserRef.current || !isRunningRef.current) return;
         analyser.getByteTimeDomainData(data);
 
+        // Peak + RMS
         let peak = 0, sumSq = 0;
         for (let i = 0; i < data.length; i++) {
           const x = (data[i] - 128) / 128;
@@ -198,14 +260,16 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
+        // Czułość – delikatnie wyższa, odporna na szum
         const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
+
         if (speakingNow) {
           speakingFramesRef.current += 1;
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             setSpeakingBlink(true);
             const s = stepsRef.current[idxRef.current];
 
-            // VERIFY: przy pierwszym głosie uruchom 4s do next
+            // VERIFY: przy pierwszym głosie – 4 s do next
             if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               setShowSilenceHint(false);
@@ -218,7 +282,7 @@ export default function PrompterPage() {
               }, ADVANCE_AFTER_SPEAK_MS);
             }
 
-            // SAY: pierwszy głos gasi hint (nie wraca w tym kroku)
+            // SAY: pierwszy głos gasi hint
             if (s?.mode === "SAY") {
               setShowSilenceHint(false);
             }
@@ -250,118 +314,6 @@ export default function PrompterPage() {
     }
   }
 
-  /* ============= WHISPER: utils & refs (AUDIO-ONLY) ============= */
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  let audioOnlyStreamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const transcribingRef = useRef(false);
-
-  function pickAudioMime(): string | undefined {
-    const prefs = [
-      "audio/webm;codecs=opus",
-      "audio/webm",
-      "audio/mp4",   // iOS Safari
-      "audio/aac",
-      "audio/mpeg",
-      "audio/ogg",
-      "audio/wav",
-    ];
-    for (const m of prefs) {
-      if ((window as any).MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
-    }
-    return undefined;
-  }
-
-  async function transcribeBlob(blob: Blob) {
-    if (transcribingRef.current) return;
-    transcribingRef.current = true;
-    try {
-      setSayTranscript("…"); // placeholder w trakcie requestu
-      const fd = new FormData();
-      fd.append("audio", blob, "say-audio");
-      const res = await fetch("/api/whisper", { method: "POST", body: fd });
-      const j = await res.json().catch(() => ({} as any));
-      console.log("[/api/whisper] status", res.status, j);
-      if (res.ok) {
-        setSayTranscript(j?.text || "");
-      } else {
-        setSayTranscript("(błąd transkrypcji)");
-      }
-    } catch (e) {
-      console.error("transcribeBlob error:", e);
-      setSayTranscript("(błąd połączenia)");
-    } finally {
-      transcribingRef.current = false;
-    }
-  }
-
-  function startSayCapture() {
-    try {
-      setSayTranscript("");
-      sayActiveRef.current = true;
-
-      if (!streamRef.current) {
-        setSayTranscript("(brak strumienia audio)");
-        return;
-      }
-
-      // >>> Audio-only stream z istniejącego streamu kamery+mikrofonu
-      const audioTracks = streamRef.current.getAudioTracks();
-      if (!audioTracks.length) {
-        setSayTranscript("(brak toru audio)");
-        return;
-      }
-      const audioOnly = new MediaStream([audioTracks[0]]);
-      audioOnlyStreamRef.current = audioOnly;
-
-      const mimeType = pickAudioMime();
-      console.log("[SAY] start, mime:", mimeType || "(domyślny)");
-      const rec = new MediaRecorder(audioOnly, mimeType ? { mimeType } : undefined);
-      mediaRecorderRef.current = rec;
-      chunksRef.current = [];
-
-      (rec as any).ondataavailable = (ev: any) => {
-        const data: Blob = ev?.data;
-        if (data && data.size > 0) chunksRef.current.push(data);
-      };
-
-      rec.onstop = async () => {
-        try {
-          const fileType = rec.mimeType || (mimeType || "audio/webm");
-          const blob = new Blob(chunksRef.current, { type: fileType });
-          chunksRef.current = [];
-          console.log("[SAY] stop, blob:", fileType, blob.size);
-          await transcribeBlob(blob);
-        } catch (e) {
-          console.error("onstop/transcribe error:", e);
-          setSayTranscript("(nagrywanie nie powiodło się)");
-        }
-      };
-
-      // na iOS Safari czasem lepiej wymusić timeslice, ale tu nagrywamy cały okres:
-      rec.start();
-    } catch (e) {
-      console.error("startSayCapture error:", e);
-      setSayTranscript("(nagrywanie niedostępne)");
-    }
-  }
-
-  function stopSayCapture() {
-    try {
-      sayActiveRef.current = false;
-      const rec = mediaRecorderRef.current;
-      if (rec && rec.state !== "inactive") {
-        console.log("[SAY] stopping recorder…");
-        rec.stop();
-      }
-    } catch {}
-    mediaRecorderRef.current = null;
-    if (audioOnlyStreamRef.current) {
-      audioOnlyStreamRef.current.getTracks().forEach(t => t.stop());
-      audioOnlyStreamRef.current = null;
-    }
-  }
-
   /* ---- 3) Timery + kroki ---- */
   function clearStepTimers() {
     [stepTimerRef, advanceTimerRef, silenceHintTimerRef, hardCapTimerRef].forEach(ref => {
@@ -371,15 +323,16 @@ export default function PrompterPage() {
   }
 
   function scheduleSilenceTimers(i: number) {
-    // 7 s → pokaż hint (VERIFY lub SAY)
+    // 7 s → hint
     silenceHintTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) setShowSilenceHint(true);
     }, SILENCE_HINT_MS);
-    // 12 s → wymuś przejście (VERIFY lub SAY)
+
+    // 12 s → auto-next
     hardCapTimerRef.current = window.setTimeout(() => {
       if (idxRef.current === i) {
         setShowSilenceHint(false);
-        stopSayCapture(); // safety
+        stopSayCapture(); // tylko na wszelki wypadek
         gotoNext(i);
       }
     }, HARD_CAP_MS);
@@ -399,23 +352,24 @@ export default function PrompterPage() {
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
-      const prep = Number(s.prep_ms ?? 2000);    // 2s na przeczytanie pytania
-      const dwell = Number(s.dwell_ms ?? 12000); // 12s aktywnego okna
+      // SAY
+      const prep = Number(s.prep_ms ?? 2000);    // 2 s na przeczytanie
+      const dwell = Number(s.dwell_ms ?? 12000); // okno 12 s
 
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // hint po 7 s tylko jeśli nadal cisza
+      // hint (po 7 s ciszy)
       silenceHintTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) setShowSilenceHint(true);
       }, SILENCE_HINT_MS);
 
-      // po prep_ms start nasłuchu/transkrypcji
+      // po prep_ms – start nagrywania i wysyłki chunków
       stepTimerRef.current = window.setTimeout(() => {
         if (idxRef.current !== i) return;
         startSayCapture();
 
-        // po dwell_ms kończymy SAY i przechodzimy dalej
+        // po dwell_ms – stop nagrywania i next
         stepTimerRef.current = window.setTimeout(() => {
           if (idxRef.current !== i) return;
           stopSayCapture();
@@ -517,9 +471,9 @@ export default function PrompterPage() {
               </div>
             )}
 
-            {/* SAY = pytanie + transkrypt pod spodem + hint po 7 s */}
+            {/* SAY = pytanie + transkrypt live + hint po 7 s */}
             {steps[idx]?.mode === "SAY" && (
-              <div className="center-text fade" style={{ whiteSpace: "pre-wrap", position: "relative" }}>
+              <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
                 <div style={{ fontSize: 18, lineHeight: 1.5, maxWidth: 700, margin: "0 auto" }}>
                   {displayText}
                 </div>
@@ -531,7 +485,6 @@ export default function PrompterPage() {
                     opacity: 0.96,
                     minHeight: 24,
                     textAlign: "center",
-                    wordBreak: "break-word",
                   }}
                 >
                   {sayTranscript}
@@ -543,12 +496,12 @@ export default function PrompterPage() {
                       position: "absolute",
                       left: 0,
                       right: 0,
-                      bottom: -8,
-                      padding: "8px 24px 0",
+                      bottom: 72,
+                      padding: "0 24px",
                       textAlign: "center",
-                      fontSize: 14,
+                      fontSize: 16,
                       lineHeight: 1.35,
-                      color: "rgba(255,255,255,0.9)",
+                      color: "rgba(255,255,255,0.95)",
                       textShadow: "0 1px 2px rgba(0,0,0,0.6)",
                       pointerEvents: "none",
                       transition: "opacity 200ms ease",
