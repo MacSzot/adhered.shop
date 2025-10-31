@@ -368,18 +368,13 @@ export default function PrompterPage() {
         {!isRunning && (
   <div className="overlay center">
     <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6 }}>
-      <h2 style={{ fontWeight: 600, marginBottom: 6 }}>MeRoar™</h2>
-      <p style={{ opacity: 0.7, fontSize: 14, marginBottom: 16 }}>
-        moduł głosu własnego — adhered / e-STEEM
+      <p style={{ fontSize: 16, opacity: 0.9, lineHeight: 1.6 }}>
+        Twoja sesja potrwa około <b>6 minut</b>.<br />
+        Prosimy o <b>wyraźne powtarzanie</b> pojawiających się wyrazów.
       </p>
 
-      <p style={{ fontSize: 16, opacity: 0.9 }}>
-        Sesja potrwa około <b>6 minut</b>.  
-        Prosimy o <b>wyraźne powtarzanie</b> pojawiających się na ekranie treści.
-      </p>
-      <p style={{ marginTop: 8, fontSize: 15, opacity: 0.85 }}>
-        Aktywowano system <b>MeRoar™</b>.  
-        Kamera i mikrofon działają w trybie analizy głosu i reakcji.
+      <p style={{ marginTop: 10, fontSize: 15, opacity: 0.85 }}>
+        Aktywowano system analizy dźwięku <b>MeRoar™</b>
       </p>
 
       {micError && (
@@ -390,6 +385,7 @@ export default function PrompterPage() {
     </div>
   </div>
 )}
+
 
 
         {isRunning && (
