@@ -44,14 +44,14 @@ export default function PrompterPage() {
     return Number.isNaN(n) ? dayRaw : String(n);
   })();
 
-  const MAX_TIME_S = 6 * 60;          // 6 minut
-  const SILENCE_HINT_MS = 7000;       // 7 s ciszy → przypomnienie
-  const HARD_CAP_MS = 12000;          // 12 s maks na krok
-  const VERIFY_NEXT_AFTER_VOICE_MS = 4000; // VERIFY: 4 s po wykryciu głosu
+  const MAX_TIME_S = 6 * 60;                // 6 minut
+  const SILENCE_HINT_MS = 7000;             // 7 s ciszy → przypomnienie
+  const HARD_CAP_MS = 12000;                // 12 s maks na krok
+  const VERIFY_NEXT_AFTER_VOICE_MS = 4000;  // VERIFY: 4 s po wykryciu głosu
 
-  // 3-stopniowy system przypomnień
+  // 3-stopniowy system przypomnień (zaktualizowany 1. komunikat)
   const HINTS = [
-    "Czy możesz powiedzieć coś na głos?",
+    "Jeśli możesz, postaraj się przeczytać na głos",
     "Pamiętaj – to przestrzeń pełna szacunku do Ciebie.",
     "Jeśli potrzebujesz chwili dla siebie, możesz wrócić później. Jeśli chcesz kontynuować, dotknij ekranu.",
   ];
@@ -418,7 +418,7 @@ export default function PrompterPage() {
     maxWidth: "100%",
   };
   const hintStyle: React.CSSProperties = {
-    position: "absolute",
+    position: "fixed",
     left: "50%",
     transform: "translateX(-50%)",
     bottom: 70,
@@ -454,10 +454,10 @@ export default function PrompterPage() {
         </div>
       </header>
 
-      {/* Zegar na środku w trakcie sesji */}
+      {/* Zegar: FIXED, stabilny środek ekranu (nie „idzie do góry”) */}
       {isRunning && (
         <div style={{
-          position: "absolute",
+          position: "fixed",
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
@@ -490,19 +490,22 @@ export default function PrompterPage() {
               )}
             </div>
 
-            {/* obrazek na dole */}
+            {/* obrazek na dole: mniejszy, bez przycinania */}
             <img
               src="/assets/meroar-supervised.png"
               alt="Supervised by MeRoar & adhered."
               style={{
-                position: "absolute",
-                bottom: 28,
+                position: "fixed",
+                bottom: 12,
                 left: "50%",
                 transform: "translateX(-50%)",
-                width: "85%",
-                maxWidth: 420,
-                opacity: 0.9,
+                width: "72%",
+                maxWidth: 360,
+                height: "auto",
+                objectFit: "contain",
                 zIndex: 8,
+                opacity: 0.92,
+                pointerEvents: "none",
               }}
             />
           </div>
