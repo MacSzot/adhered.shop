@@ -1,0 +1,10 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Jestem w bardzo dobrym miejscu." },
+    { "mode": "SAY", "prompt": "A teraz popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — Twoje słowa wyświetlą się na ekranie.", "prep_ms": 300, "dwell_ms": 12000 },
+    { "mode": "VERIFY", "target": "Szacunek do siebie staje się naturalny." },
+    { "mode": "SAY", "prompt": "A teraz popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — Twoje słowa wyświetlą się na ekranie.", "prep_ms": 300, "dwell_ms": 12000 },
+    { "mode": "VERIFY", "target": "W moim wnętrzu dojrzewa spokój i zgoda." },
+    { "mode": "SAY", "prompt": "A teraz popatrz na siebie i pogratuluj sobie. Zrób to z radością — Twoje słowa wyświetlą się na ekranie.", "prep_ms": 300, "dwell_ms": 12000 }
+  ]
+}
