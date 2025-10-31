@@ -53,21 +53,19 @@ export default function PrompterPage() {
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_MS = 7000;
-  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;
+  const SILENCE_MS = 7000;                    // ⬅️ 7 sekund ciszy na hint
+  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // 4 s po pierwszym głosie — przejście do kolejnego zdania
 
-  // Stany główne
+  // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
 
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
-  const remainingRef = useRef(remaining);
-  useEffect(() => { remainingRef.current = remaining; }, [remaining]);
-
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
+
   const [micError, setMicError] = useState<string | null>(null);
 
   // Hint (ref-bezpieczny)
@@ -77,20 +75,17 @@ export default function PrompterPage() {
 
   const [speakingBlink, setSpeakingBlink] = useState(false);
 
-  // Refy bieżących wartości
+  // Refy „świeżych” wartości
   const idxRef = useRef(idx);
   const stepsRef = useRef<PlanStep[]>([]);
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
 
   // Timery/RAF
+  const sessionTimerRef = useRef<number | null>(null);
   const stepTimerRef = useRef<number | null>(null);
   const advanceTimerRef = useRef<number | null>(null);
-  const rafVadRef = useRef<number | null>(null);
-
-  // **CHRONO** (na RAF)
-  const chronoRafRef = useRef<number | null>(null);
-  const chronoStartTsRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   // AV
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -100,7 +95,7 @@ export default function PrompterPage() {
   // VAD pomocnicze
   const heardThisStepRef = useRef(false);
   const speakingFramesRef = useRef(0);
-  const lastSpeakTsRef = useRef<number>(0);
+  const lastSpeakTsRef = useRef<number>(0); // start kroku lub ostatni głos
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
@@ -127,14 +122,9 @@ export default function PrompterPage() {
     setMicError(null);
     speakingFramesRef.current = 0;
 
-    // ostrzeżenie bez HTTPS
-    if (typeof window !== "undefined" && location.protocol !== "https:" && location.hostname !== "localhost") {
-      console.warn("getUserMedia wymaga HTTPS na produkcji.");
-    }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        video: true,
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
@@ -144,28 +134,14 @@ export default function PrompterPage() {
       });
 
       streamRef.current = stream;
+      if (videoRef.current) (videoRef.current as any).srcObject = stream;
 
-      // VIDEO: przypnij źródło i wymuś play (autoplay policy)
-      const v = videoRef.current;
-      if (v) {
-        (v as any).srcObject = stream;
-        v.onloadedmetadata = () => {
-          v.play().catch(() => {
-            // niektóre przeglądarki wymagają gestu użytkownika
-          });
-        };
-        // podwójna próba (czasem onloadedmetadata nie strzela na mobilnych)
-        try { await v.play(); } catch {}
-      }
-
-      // AUDIO: AudioContext + Analyser
       const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
       const ac = new Ctx();
       audioCtxRef.current = ac;
 
       if (ac.state === "suspended") {
-        // Safari/iOS – wznowimy po kliknięciu (Start)
-        try { await ac.resume(); } catch {}
+        await ac.resume().catch(() => {});
         const resumeOnClick = () => ac.resume().catch(() => {});
         document.addEventListener("click", resumeOnClick, { once: true });
       }
@@ -194,7 +170,7 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // czułość (lekko podbita vs poprzednio)
+        // czułość
         const speakingNow = (rms > 0.020) || (peak > 0.045) || (vu > 8);
 
         if (speakingNow) {
@@ -218,7 +194,7 @@ export default function PrompterPage() {
           speakingFramesRef.current = 0;
         }
 
-        // HINT po 7s ciszy
+        // HINT po 7s ciszy (liczymy od wejścia w krok lub od ostatniego głosu)
         const silentFor = performance.now() - lastSpeakTsRef.current;
         const s = stepsRef.current[idxRef.current];
         if (s?.mode === "VERIFY") {
@@ -229,16 +205,16 @@ export default function PrompterPage() {
         }
 
         window.setTimeout(() => setSpeakingBlink(false), 120);
-        rafVadRef.current = requestAnimationFrame(loop);
+        rafRef.current = requestAnimationFrame(loop);
       };
-      rafVadRef.current = requestAnimationFrame(loop);
+      rafRef.current = requestAnimationFrame(loop);
 
       return true;
     } catch (err: any) {
       console.error("getUserMedia error:", err);
       setMicError(
         err?.name === "NotAllowedError"
-          ? "Brak zgody na mikrofon/kamerę. Sprawdź uprawnienia przeglądarki dla tej domeny."
+          ? "Brak zgody na mikrofon/kamerę."
           : "Nie udało się uruchomić mikrofonu/kamery."
       );
       return false;
@@ -246,7 +222,7 @@ export default function PrompterPage() {
   }
 
   function stopAV() {
-    if (rafVadRef.current) { cancelAnimationFrame(rafVadRef.current); rafVadRef.current = null; }
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
@@ -256,38 +232,9 @@ export default function PrompterPage() {
     }
   }
 
-  /* ---- 3) Chronometr na requestAnimationFrame ---- */
-  function startChrono() {
-    chronoStartTsRef.current = performance.now();
-    setRemaining(MAX_TIME);
-
-    const tick = () => {
-      if (!chronoStartTsRef.current) return;
-      const elapsed = Math.floor((performance.now() - chronoStartTsRef.current) / 1000);
-      const nextRemaining = Math.max(0, MAX_TIME - elapsed);
-      if (nextRemaining !== remainingRef.current) {
-        remainingRef.current = nextRemaining;
-        setRemaining(nextRemaining);
-      }
-      if (nextRemaining > 0 && isRunning) {
-        chronoRafRef.current = requestAnimationFrame(tick);
-      } else {
-        setIsRunning(false);
-        stopAV();
-        setLevelPct(0);
-      }
-    };
-    chronoRafRef.current = requestAnimationFrame(tick);
-  }
-
-  function stopChrono() {
-    if (chronoRafRef.current) cancelAnimationFrame(chronoRafRef.current);
-    chronoRafRef.current = null;
-    chronoStartTsRef.current = null;
-  }
-
-  /* ---- 4) Timery kroków ---- */
-  function clearStepTimers() {
+  /* ---- 3) Timery + kroki ---- */
+  function clearAllTimers() {
+    if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
     if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
     if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
   }
@@ -297,12 +244,13 @@ export default function PrompterPage() {
     const s = stepsRef.current[i];
     if (!s) return;
 
-    clearStepTimers();
+    clearAllTimers();
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
+      // start liczenia ciszy OD TERAZ
       lastSpeakTsRef.current = performance.now();
       setDisplayText(s.target || "");
     } else {
@@ -319,14 +267,14 @@ export default function PrompterPage() {
   }
 
   function gotoNext(i: number) {
-    clearStepTimers();
+    clearAllTimers();
     setShowSilenceHint(false);
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
     runStep(next);
   }
 
-  /* ---- 5) Start/Stop sesji ---- */
+  /* ---- 4) Start/Stop sesji ---- */
   const startSession = async () => {
     if (!stepsRef.current.length) return;
 
@@ -334,12 +282,26 @@ export default function PrompterPage() {
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
-    // 2) Start sesji + chrono
+    // 2) Start sesji i TIMERA — bez zależności od refów
     setIsRunning(true);
     setRemaining(MAX_TIME);
-    startChrono();
 
-    // 3) Krok 0
+    if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
+    sessionTimerRef.current = window.setInterval(() => {
+      setRemaining(prev => {
+        if (prev <= 1) {
+          // zatrzymaj wszystko przy 0
+          if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
+          setIsRunning(false);
+          stopAV();
+          setLevelPct(0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    // 3) Start kroków
     setIdx(0);
     setDisplayText(stepsRef.current[0]?.mode === "VERIFY" ? (stepsRef.current[0].target || "") : (stepsRef.current[0]?.prompt || ""));
     runStep(0);
@@ -347,13 +309,12 @@ export default function PrompterPage() {
 
   const stopSession = () => {
     setIsRunning(false);
-    stopChrono();
-    clearStepTimers();
+    clearAllTimers();
     stopAV();
     setLevelPct(0);
   };
 
-  /* ---- 6) Render ---- */
+  /* ---- 5) Render ---- */
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(1, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
@@ -387,12 +348,12 @@ export default function PrompterPage() {
             <div className="intro">
               <h2>Teleprompter</h2>
               <p>
-                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b> (HTTPS wymagany).
+                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.
                 Kroki <b>VERIFY</b> stoją w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przejdziemy dalej.
                 W ciszy pokażemy prośbę o powtórzenie <b>po 7 sekundach</b>.
               </p>
               {micError && (
-                <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError}</p>
+                <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError} — sprawdź uprawnienia przeglądarki.</p>
               )}
             </div>
           </div>
