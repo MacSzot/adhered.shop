@@ -253,12 +253,12 @@ export default function PrompterPage() {
     }
   }
 
-  /* ===== SAY: Web Speech API (fallback natychmiastowy) ===== */
+  /* ===== SAY: Web Speech API (natychmiastowy transcript) ===== */
   function startSayCapture() {
     sayActiveRef.current = true;
     setSayTranscript("");
 
-    // Jeśli mamy już Recognition — zatrzymaj i wyczyść.
+    // jeśli coś już działało — czyścimy
     stopSayCapture();
 
     const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
@@ -266,17 +266,17 @@ export default function PrompterPage() {
       console.warn("Web Speech API niedostępne w tej przeglądarce.");
       return;
     }
+
     const rec = new SR();
     recognitionRef.current = rec;
 
-    rec.lang = "pl-PL";       // możesz zmienić na "en-GB" lub dynamicznie
-    rec.continuous = true;    // ciągłe nasłuchiwanie w oknie SAY
+    rec.lang = "pl-PL";       // zmień wg potrzeby, np. "en-GB"
+    rec.continuous = true;    // ciągle w obrębie kroku SAY
     rec.interimResults = true;
 
     let buffer = "";
 
     rec.onresult = (e: any) => {
-      // Składamy interim + final
       let interim = "";
       let finalText = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -287,10 +287,8 @@ export default function PrompterPage() {
           interim += res[0].transcript;
         }
       }
-      // Pokazuj natychmiast
       const composed = (buffer + finalText + interim).trim();
       setSayTranscript(composed);
-      // Buforuj finale, żeby interim nie nadpisywał
       if (finalText) buffer += finalText + " ";
     };
 
@@ -299,7 +297,7 @@ export default function PrompterPage() {
     };
 
     rec.onend = () => {
-      // domknięcie przez przeglądarkę — jeśli nadal aktywni, spróbuj wznowić
+      // jeżeli krok ciągle aktywny — wznów
       if (sayActiveRef.current) {
         try { rec.start(); } catch {}
       }
@@ -355,7 +353,7 @@ export default function PrompterPage() {
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      stopSayCapture(); // na wszelki wypadek
+      stopSayCapture(); // safety
       setDisplayText(s.target || "");
       scheduleSilenceTimers(i);
     } else {
@@ -366,7 +364,7 @@ export default function PrompterPage() {
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // 7s → pokaż hint (jeśli nadal cisza)
+      // hint po 7s ciszy
       silenceHintTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) setShowSilenceHint(true);
       }, SILENCE_HINT_MS);
@@ -422,6 +420,28 @@ export default function PrompterPage() {
   /* ---- 5) Render ---- */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+  // Wspólne style do transcriptu (czytelny, ale nie "super gruby")
+  const transcriptStyle: React.CSSProperties = {
+    marginTop: 14,
+    fontSize: "clamp(18px, 4.2vw, 24px)",
+    lineHeight: 1.35,
+    fontWeight: 500,                   // ŚREDNIA grubość
+    letterSpacing: "0.2px",
+    opacity: 0.98,
+    minHeight: 32,
+    textAlign: "center",
+    padding: "10px 12px",
+    background: "rgba(0,0,0,0.22)",
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    textShadow: "0 1px 2px rgba(0,0,0,0.40)",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.18)",
+    maxWidth: 820,
+    marginLeft: "auto",
+    marginRight: "auto",
+    backdropFilter: "blur(2px)",
+  };
+
   return (
     <main className="prompter-full">
       <header className="topbar topbar--dense">
@@ -472,7 +492,13 @@ export default function PrompterPage() {
 
         {/* OVERLAY SESJI */}
         {isRunning && (
-          <div className="overlay center">
+          <div
+            className="overlay center"
+            style={{
+              // odrobinę większa „strefa oddechu” na dole, żeby hint nigdy nie nachodził
+              paddingBottom: 96,
+            }}
+          >
             {/* VERIFY = tekst do powtórzenia */}
             {steps[idx]?.mode === "VERIFY" && (
               <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
@@ -482,23 +508,23 @@ export default function PrompterPage() {
 
             {/* SAY = pytanie + transkrypt pod spodem + hint po 7 s */}
             {steps[idx]?.mode === "SAY" && (
-              <div className="center-text fade" style={{ whiteSpace: "pre-wrap", position: "relative" }}>
-                <div style={{ fontSize: 18, lineHeight: 1.5, maxWidth: 700, margin: "0 auto" }}>
+              <div
+                className="center-text fade"
+                style={{ whiteSpace: "pre-wrap", position: "relative", maxWidth: 900, margin: "0 auto" }}
+              >
+                <div
+                  style={{
+                    fontSize: "clamp(18px, 3.6vw, 22px)",
+                    lineHeight: 1.5,
+                    maxWidth: 820,
+                    margin: "0 auto",
+                    textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+                  }}
+                >
                   {displayText}
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 16,
-                    fontSize: 17,
-                    opacity: 0.96,
-                    minHeight: 28,
-                    textAlign: "center",
-                    padding: "6px 8px",
-                    background: "rgba(0,0,0,0.28)",
-                    borderRadius: 8,
-                  }}
-                >
+                <div style={transcriptStyle}>
                   {sayTranscript}
                 </div>
 
@@ -508,7 +534,7 @@ export default function PrompterPage() {
                       position: "absolute",
                       left: 0,
                       right: 0,
-                      bottom: 48,
+                      bottom: 28, // niżej, żeby nie nachodził
                       padding: "0 24px",
                       textAlign: "center",
                       fontSize: 15,
@@ -516,7 +542,7 @@ export default function PrompterPage() {
                       color: "rgba(255,255,255,0.94)",
                       textShadow: "0 1px 2px rgba(0,0,0,0.55)",
                       pointerEvents: "none",
-                      opacity: 0.95,
+                      opacity: 0.96,
                       transition: "opacity 180ms ease",
                     }}
                   >
