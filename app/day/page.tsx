@@ -368,15 +368,18 @@ export default function PrompterPage() {
         {!isRunning && (
   <div className="overlay center">
     <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6 }}>
-      <h2 style={{ fontWeight: 600, marginBottom: 12 }}>Teleprompter</h2>
+      <h2 style={{ fontWeight: 600, marginBottom: 6 }}>MeRoar™</h2>
+      <p style={{ opacity: 0.7, fontSize: 14, marginBottom: 16 }}>
+        moduł głosu własnego — adhered / e-STEEM
+      </p>
+
       <p style={{ fontSize: 16, opacity: 0.9 }}>
-        Aby rozpocząć, kliknij <b>Start</b> i udziel dostępu do <b>kamery</b> oraz <b>mikrofonu</b>.
+        Sesja potrwa około <b>6 minut</b>.  
+        Prosimy o <b>wyraźne powtarzanie</b> pojawiających się na ekranie treści.
       </p>
       <p style={{ marginTop: 8, fontSize: 15, opacity: 0.85 }}>
-        Każde zdanie pozostanie na ekranie do momentu, gdy <b>zostanie wypowiedziane na głos</b>.  
-        Po zarejestrowaniu głosu system przejdzie dalej po <b>4 sekundach</b>.  
-        W przypadku braku reakcji po <b>7 sekundach</b> pojawi się delikatna sugestia powtórzenia,  
-        a po <b>12 sekundach</b> tekst zmieni się automatycznie.
+        Aktywowano system <b>MeRoar™</b>.  
+        Kamera i mikrofon działają w trybie analizy głosu i reakcji.
       </p>
 
       {micError && (
