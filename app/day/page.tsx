@@ -366,20 +366,28 @@ export default function PrompterPage() {
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
         {!isRunning && (
-          <div className="overlay center">
-            <div className="intro">
-              <h2>Teleprompter</h2>
-              <p>
-                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.
-                Kroki <b>VERIFY</b> stoją w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przejdziemy dalej.
-                Gdy będzie cisza, pokażemy delikatną prośbę o powtórzenie po <b>7 s</b>, a po <b>12 s</b> przejdziemy dalej automatycznie.
-              </p>
-              {micError && (
-                <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError} — sprawdź uprawnienia przeglądarki.</p>
-              )}
-            </div>
-          </div>
-        )}
+  <div className="overlay center">
+    <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6 }}>
+      <h2 style={{ fontWeight: 600, marginBottom: 12 }}>Teleprompter</h2>
+      <p style={{ fontSize: 16, opacity: 0.9 }}>
+        Aby rozpocząć, kliknij <b>Start</b> i udziel dostępu do <b>kamery</b> oraz <b>mikrofonu</b>.
+      </p>
+      <p style={{ marginTop: 8, fontSize: 15, opacity: 0.85 }}>
+        Każde zdanie pozostanie na ekranie do momentu, gdy <b>zostanie wypowiedziane na głos</b>.  
+        Po zarejestrowaniu głosu system przejdzie dalej po <b>4 sekundach</b>.  
+        W przypadku braku reakcji po <b>7 sekundach</b> pojawi się delikatna sugestia powtórzenia,  
+        a po <b>12 sekundach</b> tekst zmieni się automatycznie.
+      </p>
+
+      {micError && (
+        <p style={{ marginTop: 16, color: "#ffb3b3", fontSize: 14 }}>
+          {micError} — upewnij się, że przeglądarka ma dostęp do mikrofonu i kamery.
+        </p>
+      )}
+    </div>
+  </div>
+)}
+
 
         {isRunning && (
           <div className="overlay center">
