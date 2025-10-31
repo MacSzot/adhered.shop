@@ -53,7 +53,7 @@ export default function PrompterPage() {
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;           // anty-klik: wymagaj 2 kolejnych „mówiących” ramek
-  const SILENCE_MS = 1500;                      // po tylu ms ciszy pokaż hint
+  const SILENCE_MS = 7000;                      // ⬅️ HINT po 7 sekundach ciszy
   const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;    // 4 s po pierwszym głosie przełącz krok
 
   // Stany UI
@@ -62,27 +62,16 @@ export default function PrompterPage() {
   const [displayText, setDisplayText] = useState<string>("");
 
   const [isRunning, setIsRunning] = useState(false);
-
-  // (stary) stoper – zostawiony bez zmian dla kompatybilności wewnętrznej
-  const [remaining, setRemaining] = useState(MAX_TIME);
-
-  // NOWY — wyświetlany licznik oparty o performance.now()
-  const startTsRef = useRef<number | null>(null);
-  const displayRafRef = useRef<number | null>(null);
-  const [displayRemaining, setDisplayRemaining] = useState(MAX_TIME);
-
+  const [remaining, setRemaining] = useState(MAX_TIME); // działający stoper – nie ruszamy
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
 
   const [micError, setMicError] = useState<string | null>(null);
 
-  // HINT zarządzany ref-bezpiecznie (unikamy „starych” wartości w pętli audio)
+  // HINT (ref-bezpieczny)
   const [showSilenceHint, _setShowSilenceHint] = useState(false);
   const showSilenceHintRef = useRef(false);
-  const setShowSilenceHint = (v: boolean) => {
-    showSilenceHintRef.current = v;
-    _setShowSilenceHint(v);
-  };
+  const setShowSilenceHint = (v: boolean) => { showSilenceHintRef.current = v; _setShowSilenceHint(v); };
 
   const [speakingBlink, setSpeakingBlink] = useState(false);
 
@@ -129,33 +118,12 @@ export default function PrompterPage() {
     })();
   }, []);
 
-  /* ---------- WYŚWIETLACZ CZASU (performance.now) ---------- */
-  function startDisplayClock() {
-    if (startTsRef.current == null) startTsRef.current = performance.now();
-    const tick = () => {
-      if (startTsRef.current == null) return;
-      const elapsedSec = Math.floor((performance.now() - startTsRef.current) / 1000);
-      const left = Math.max(0, MAX_TIME - elapsedSec);
-      setDisplayRemaining(left);
-      if (left > 0 && isRunningRef.current) {
-        displayRafRef.current = requestAnimationFrame(tick);
-      }
-    };
-    displayRafRef.current = requestAnimationFrame(tick);
-  }
-  function stopDisplayClock() {
-    if (displayRafRef.current) cancelAnimationFrame(displayRafRef.current);
-    displayRafRef.current = null;
-    startTsRef.current = null;
-    setDisplayRemaining(MAX_TIME);
-  }
-
   /* ---------- 2) Start/Stop AV + pętla VAD ---------- */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
     speakingFramesRef.current = 0;
-    // nie ustawiamy lastSpeakTsRef tutaj — ustawimy go NA WEJŚCIU W KROK, żeby hint nie wyskakiwał od razu
+    // ważne: NIE ustawiamy lastSpeakTsRef tutaj — ustawimy go na wejściu w krok (runStep)
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -187,7 +155,7 @@ export default function PrompterPage() {
       ac.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
 
-      // Start pętli DOPIERO po pełnej inicjalizacji
+      // Pętla VAD
       const data = new Uint8Array(analyser.fftSize);
       const loop = () => {
         if (!analyserRef.current) return;
@@ -202,21 +170,23 @@ export default function PrompterPage() {
           sumSq += x * x;
         }
         const rms = Math.sqrt(sumSq / data.length);
-        const vu = Math.min(100, peak * 460); // lekko „podkręcony” wskaźnik
-
+        const vu = Math.min(100, peak * 460);
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // Czułość nieco wyższa niż wcześniej
+        // Czułość
         const speakingNow = (rms > 0.020) || (peak > 0.045) || (vu > 8);
+        const now = performance.now();
 
         if (speakingNow) {
           speakingFramesRef.current += 1;
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
-            // stabilnie mówimy
-            lastSpeakTsRef.current = performance.now();
-            setSpeakingBlink(true);
+            // stabilna mowa → reset licznika ciszy
+            lastSpeakTsRef.current = now;
 
-            // Jeśli VERIFY i nie odpaliliśmy jeszcze 4s licznika → odpal
+            setSpeakingBlink(true);
+            window.setTimeout(() => setSpeakingBlink(false), 120);
+
+            // jeśli VERIFY i pierwszy raz w tym kroku — uruchom 4s przejście
             const s = stepsRef.current[idxRef.current];
             if (isRunningRef.current && s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
@@ -229,21 +199,23 @@ export default function PrompterPage() {
             }
           }
         } else {
-          // brak mowy — wyzeruj ciągłość
+          // brak stabilnej mowy
           speakingFramesRef.current = 0;
         }
 
-        // Pokazuj/znikaj hint zależnie od ciszy — LICZONE OD STARTU KROKU
-        const silentFor = performance.now() - lastSpeakTsRef.current;
+        // HINT: dopiero po 7s ciszy od startu kroku lub ostatniego głosu
         const s = stepsRef.current[idxRef.current];
         if (isRunningRef.current && s?.mode === "VERIFY") {
-          if (silentFor >= SILENCE_MS && !showSilenceHintRef.current) setShowSilenceHint(true);
-          if (silentFor < SILENCE_MS && showSilenceHintRef.current) setShowSilenceHint(false);
+          const silentFor = now - lastSpeakTsRef.current;
+          if (silentFor >= SILENCE_MS && !showSilenceHintRef.current) {
+            setShowSilenceHint(true);
+          } else if (silentFor < SILENCE_MS && showSilenceHintRef.current) {
+            setShowSilenceHint(false);
+          }
         } else if (showSilenceHintRef.current) {
           setShowSilenceHint(false);
         }
 
-        window.setTimeout(() => setSpeakingBlink(false), 120);
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
@@ -291,12 +263,12 @@ export default function PrompterPage() {
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      // USTAWIAMY PUNKT ODNIESIENIA CISZY TU — od wejścia w krok
+      // ⬅️ punkt odniesienia dla ciszy: TERAZ (wejście w krok)
       lastSpeakTsRef.current = performance.now();
       setDisplayText(s.target || "");
-      // bez „hard cap”: czekamy, aż użytkownik cokolwiek powie, wtedy 4 s i dalej
+      // czekamy na pierwszy głos → 4s i dalej; jeśli cisza ≥ 7s, pokaż hint
     } else {
-      // Tryb SAY — MVP (bez weryfikacji treści)
+      // Tryb SAY – pozostawiony bez zmian
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
       setDisplayText(s.prompt || "");
@@ -325,11 +297,9 @@ export default function PrompterPage() {
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
-    // wszystko gotowe → start sesji + (stary) timer + nowy wyświetlacz
+    // wszystko gotowe → start sesji + timer (działa u Ciebie — nie zmieniamy)
     setIsRunning(true);
     setRemaining(MAX_TIME);
-    stopDisplayClock();
-    startDisplayClock();
 
     if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
     sessionTimerRef.current = window.setInterval(() => {
@@ -349,7 +319,6 @@ export default function PrompterPage() {
     setIsRunning(false);
     clearAllTimers();
     stopAV();
-    stopDisplayClock();
     setLevelPct(0);
   };
 
@@ -377,8 +346,7 @@ export default function PrompterPage() {
         </div>
       </header>
 
-      {/* Używamy displayRemaining zamiast remaining */}
-      <div className="timer-top timer-top--strong">{fmt(displayRemaining)}</div>
+      <div className="timer-top timer-top--strong">{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
@@ -390,7 +358,8 @@ export default function PrompterPage() {
               <p>
                 Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.
                 Kroki <b>VERIFY</b> stoją w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przejdziemy dalej.
-                W ciszy pokażemy prośbę o powtórzenie.
+                <br />
+                <b>Przypomnienie pojawi się dopiero po 7 sekundach ciszy.</b>
               </p>
               {micError && (
                 <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError} — sprawdź uprawnienia przeglądarki.</p>
@@ -405,7 +374,7 @@ export default function PrompterPage() {
               {displayText}
             </div>
 
-            {/* HINT POD TEKSTEM (na dole, wyśrodkowany) */}
+            {/* HINT POD TEKSTEM (po 7s ciszy) */}
             {showSilenceHint && (
               <div
                 style={{
