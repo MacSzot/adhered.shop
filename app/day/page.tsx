@@ -2,19 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 
-// --- PLAN DNIA: typy + loader z priorytetem JSON -> TXT ---
+// --- Typ planu dnia ---
 type PlanStep = {
   mode: "VERIFY" | "SAY";
-  target?: string;             // VERIFY: zdanie do powtórzenia
-  prompt?: string;             // SAY: instrukcja
+  target?: string;
+  prompt?: string;
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
-  prep_ms?: number;            // SAY: czas przygotowania (np. 5 s)
-  dwell_ms?: number;           // SAY: czas okna mówienia (np. 45 s)
-  note?: string;               // delikatna wskazówka
+  prep_ms?: number;
+  dwell_ms?: number;
+  note?: string;
 };
 
+// --- Loader planu (JSON -> TXT fallback) ---
 async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
   try {
     const r = await fetch(`/days/${day}.plan.json`, { cache: "no-store" });
@@ -23,83 +24,62 @@ async function loadDayPlanOrTxt(day: string): Promise<{ source: "json" | "txt"; 
       const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
       if (steps.length) return { source: "json", steps };
     }
-  } catch { /* ignore */ }
-
-  // Fallback: /public/days/<day>.txt — każda linia = VERIFY
+  } catch {}
   const r2 = await fetch(`/days/${day}.txt`, { cache: "no-store" });
   if (!r2.ok) throw new Error(`Brak pliku dnia: ${day}.plan.json i ${day}.txt`);
   const txt = await r2.text();
-
   const steps: PlanStep[] = txt
     .split(/\r?\n/)
     .map(s => s.trim())
     .filter(Boolean)
     .map(line => ({ mode: "VERIFY" as const, target: line }));
-
   return { source: "txt", steps };
 }
 
-// --- helpers ---
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
 
-function deburrPL(s: string) {
-  return s
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[„”"’']/g, "")
-    .toLowerCase();
-}
-function normalize(s: string) {
-  // bez unicode-escape — maks. kompatybilność
-  return deburrPL(s).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-// --- komponent ---
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // --- USTAWIENIA ---
+  // USTAWIENIA
   const USER_NAME = "demo";
   const DAY_LABEL = "Dzień " + (typeof window !== "undefined" ? getParam("day", "01") : "01");
-  const MAX_TIME = 6 * 60; // 6 minut
+  const MAX_TIME = 6 * 60; // 6:00
 
-  // --- STANY ---
+  // STANY UI
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [planReady, setPlanReady] = useState(false);
 
   const [isRunning, setIsRunning] = useState(false);
+  const runningRef = useRef(false);
+
   const [remaining, setRemaining] = useState(MAX_TIME);
+  const [idx, setIdx] = useState(0);
+  const [displayText, setDisplayText] = useState<string>("");
+  const [showSilenceHint, setShowSilenceHint] = useState(false);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
 
-  const [idx, setIdx] = useState(0);
-  const [displayText, setDisplayText] = useState<string>("");
-  const [phase, setPhase] = useState<"prep" | "show">("show");
+  // CZAS
+  const endAtRef = useRef<number | null>(null);
+  const intervalIdRef = useRef<number | null>(null);
 
-  // podpowiedź przy ciszy
-  const [showSilenceHint, setShowSilenceHint] = useState(false);
-
-  // timery/RAF
-  const rafTimerRef = useRef<number | null>(null);
-  const stepTimerRef = useRef<number | null>(null);
-  const silenceHintTimerRef = useRef<number | null>(null);
-  const hardCapTimerRef = useRef<number | null>(null);
-
-  // zegar oparty o czas docelowy
-  const endEpochRef = useRef<number | null>(null);
-
-  // audio / video
+  // AUDIO/VIDEO
+  const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const speakingNowRef = useRef<boolean>(false);
-  const stepEnterEpochRef = useRef<number>(0);
-  const haveSpokenThisStepRef = useRef<boolean>(false);
+  const rafIdRef = useRef<number | null>(null);
 
-  // --- loader planu dnia ---
+  // VERIFY – kontrola kroku
+  const stepEnterMsRef = useRef<number>(0);
+  const lastSpeechMsRef = useRef<number | null>(null);
+  const advancedThisStepRef = useRef<boolean>(false);
+
+  // --- Load plan ---
   useEffect(() => {
     const day = getParam("day", "01");
     (async () => {
@@ -120,30 +100,29 @@ export default function PrompterPage() {
     })();
   }, []);
 
-  // --- AV + VAD ---
+  // --- Start/Stop AV + VAD ---
   async function startAV(): Promise<boolean> {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       streamRef.current = stream;
-
-      // Kamera
       if (videoRef.current) (videoRef.current as any).srcObject = stream;
 
-      // Audio VU/VAD
       const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
       const ac = new Ctx();
       audioCtxRef.current = ac;
+
       const analyser = ac.createAnalyser();
       analyser.fftSize = 1024;
-      ac.createMediaStreamSource(stream).connect(analyser);
+      const src = ac.createMediaStreamSource(stream);
+      src.connect(analyser);
       analyserRef.current = analyser;
 
       const data = new Uint8Array(analyser.fftSize);
-      const tickVU = () => {
-        if (!isRunning || !analyserRef.current) return;
+
+      const tick = () => {
+        if (!runningRef.current || !analyserRef.current) return;
         analyserRef.current.getByteTimeDomainData(data);
 
-        // prosty peak (0..1)
         let peak = 0;
         for (let i = 0; i < data.length; i++) {
           const v = Math.abs((data[i] - 128) / 128);
@@ -151,34 +130,42 @@ export default function PrompterPage() {
         }
 
         // VU
-        const target = Math.min(100, peak * 420); // delikatnie „czulszy”
+        const target = Math.min(100, peak * 420);
         setLevelPct(prev => Math.max(target, prev * 0.85));
 
-        // VAD (próg mówienia ~0.10)
-        speakingNowRef.current = peak > 0.10;
+        // VAD
+        const speaking = peak > 0.10; // delikatnie czulszy próg
+        const now = performance.now();
 
-        // VERIFY: logika przejścia – po min. 4s od wejścia kroku, jeśli „był głos”
+        // VERIFY – logika kroku: nie przeskakuj od razu, dopiero gdy minęły >=4s OD WEJŚCIA i był głos
         const s = steps[idx];
         if (s?.mode === "VERIFY") {
-          const now = performance.now();
-          const elapsed = now - stepEnterEpochRef.current;
+          const elapsedFromEnter = now - stepEnterMsRef.current;
 
-          // po 7s ciszy pokaż hint
-          if (elapsed >= 7000 && !speakingNowRef.current) {
+          if (speaking) {
+            lastSpeechMsRef.current = now;
+          }
+
+          // Pokaż hint dopiero po 7s ciszy od wejścia (brak lastSpeech)
+          if (!lastSpeechMsRef.current && elapsedFromEnter >= 7000) {
             setShowSilenceHint(true);
           }
-          // jeśli wykryto głos i minęło >= 4s od wejścia – przejdź dalej raz
-          if (speakingNowRef.current && elapsed >= 4000 && !haveSpokenThisStepRef.current) {
-            haveSpokenThisStepRef.current = true;
-            // mała pauza 250ms dla płynności
+
+          // Przejście dalej: minęły >=4s od wejścia ORAZ zarejestrowano głos (kiedykolwiek w tym kroku)
+          if (!advancedThisStepRef.current && elapsedFromEnter >= 4000 && lastSpeechMsRef.current) {
+            advancedThisStepRef.current = true;
+            setShowSilenceHint(false);
+            // krótka pauza dla płynności
             window.setTimeout(() => gotoNext(idx), 250);
           }
+        } else {
+          // SAY – bez rozpoznawania treści w tej fazie (MVP)
         }
 
-        requestAnimationFrame(tickVU);
+        rafIdRef.current = requestAnimationFrame(tick);
       };
-      requestAnimationFrame(tickVU);
 
+      rafIdRef.current = requestAnimationFrame(tick);
       return true;
     } catch (e) {
       console.error(e);
@@ -188,72 +175,76 @@ export default function PrompterPage() {
   }
 
   function stopAV() {
+    if (rafIdRef.current) { cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null; }
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
-    analyserRef.current = null;
-    audioCtxRef.current?.close().catch(() => {});
+    try { audioCtxRef.current?.close(); } catch {}
     audioCtxRef.current = null;
+    analyserRef.current = null;
   }
 
-  // --- narzędzia timerów ---
-  function clearTimers() {
-    if (rafTimerRef.current) { cancelAnimationFrame(rafTimerRef.current); rafTimerRef.current = null; }
-    if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
-    if (silenceHintTimerRef.current) { window.clearTimeout(silenceHintTimerRef.current); silenceHintTimerRef.current = null; }
-    if (hardCapTimerRef.current) { window.clearTimeout(hardCapTimerRef.current); hardCapTimerRef.current = null; }
-  }
+  // --- Timer (start PO zgodzie na media) ---
+  function startCountdown(seconds: number) {
+    const endAt = Date.now() + seconds * 1000;
+    endAtRef.current = endAt;
 
-  function startCountdownRaf(seconds: number) {
-    const endAt = performance.now() + seconds * 1000;
-    endEpochRef.current = endAt;
+    if (intervalIdRef.current) {
+      window.clearInterval(intervalIdRef.current);
+      intervalIdRef.current = null;
+    }
 
-    const tick = () => {
-      if (!isRunning) return;
-      const now = performance.now();
-      const left = Math.max(0, Math.round((endAt - now) / 1000));
-      setRemaining(left);
-      if (left <= 0) {
+    intervalIdRef.current = window.setInterval(() => {
+      if (!runningRef.current || !endAtRef.current) return;
+      const secsLeft = Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000));
+      setRemaining(secsLeft);
+      if (secsLeft <= 0) {
         stopSession();
-        return;
       }
-      rafTimerRef.current = requestAnimationFrame(tick);
-    };
-    rafTimerRef.current = requestAnimationFrame(tick);
+    }, 250); // częstsze odświeżanie, ale liczba wyświetlana to pełne sekundy
   }
 
-  // --- silnik kroków ---
+  function stopCountdown() {
+    if (intervalIdRef.current) {
+      window.clearInterval(intervalIdRef.current);
+      intervalIdRef.current = null;
+    }
+    endAtRef.current = null;
+  }
+
+  // --- Silnik kroków ---
   function runStep(i: number) {
     if (!steps.length) return;
     const s = steps[i];
     if (!s) return;
 
-    // reset UI/Timery dla kroku
-    clearTimers();
+    // reset kontroli kroku
+    advancedThisStepRef.current = false;
+    lastSpeechMsRef.current = null;
     setShowSilenceHint(false);
-    haveSpokenThisStepRef.current = false;
-    stepEnterEpochRef.current = performance.now();
+    stepEnterMsRef.current = performance.now();
 
     if (s.mode === "VERIFY") {
-      // Pokaż zdanie i czekaj na głos (bez Whispera)
-      setPhase("show");
       setDisplayText(s.target || "");
 
-      // Twardy limit 12s – przejdź dalej, żeby nie utknąć
-      hardCapTimerRef.current = window.setTimeout(() => {
-        gotoNext(i);
+      // twardy cap 12s — żeby nie utknąć nawet przy braku głosu
+      window.setTimeout(() => {
+        if (!advancedThisStepRef.current && runningRef.current && idx === i) {
+          setShowSilenceHint(false);
+          gotoNext(i);
+        }
       }, 12000);
     } else {
-      // SAY – MVP: intro (prep), potem okno mówienia, potem kolejny krok
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
 
-      setPhase("prep");
       setDisplayText(s.prompt || "");
-
-      stepTimerRef.current = window.setTimeout(() => {
-        setPhase("show");
+      // po PREP -> SHOW (w tym MVP pokazujemy ten sam tekst)
+      window.setTimeout(() => {
+        if (!runningRef.current || idx !== i) return;
         setDisplayText(s.prompt || "");
-        stepTimerRef.current = window.setTimeout(() => {
+        // po DWELL -> next
+        window.setTimeout(() => {
+          if (!runningRef.current || idx !== i) return;
           gotoNext(i);
         }, dwell);
       }, prep);
@@ -261,40 +252,53 @@ export default function PrompterPage() {
   }
 
   function gotoNext(i: number) {
-    clearTimers();
     const next = (i + 1) % steps.length;
     setIdx(next);
+    const s = steps[next];
+    setDisplayText(s?.mode === "VERIFY" ? (s.target || "") : (s?.prompt || ""));
+    // reset warunków następnego kroku
+    advancedThisStepRef.current = false;
+    lastSpeechMsRef.current = null;
     setShowSilenceHint(false);
-    haveSpokenThisStepRef.current = false;
-    stepEnterEpochRef.current = performance.now();
-    runStep(next);
+    stepEnterMsRef.current = performance.now();
   }
 
-  // --- start/stop sesji ---
+  // --- Start/Stop sesji (kolejność: media -> timer -> kroki) ---
   const startSession = async () => {
-    // 1) Plan musi być gotowy
     if (!planReady || !steps.length) return;
 
-    // 2) Najpierw prosimy o media; timer rusza dopiero gdy mamy stream
-    const okAV = await startAV();
-    if (!okAV) return;
+    // 1) Zapytaj o media — dopiero po pozwoleniu uruchamiamy licznik i kroki
+    const ok = await startAV();
+    if (!ok) return;
 
-    // 3) Uruchamiamy sesję i licznik (RAF)
+    // 2) Start stanu „running”
+    runningRef.current = true;
     setIsRunning(true);
-    setRemaining(MAX_TIME);
-    startCountdownRaf(MAX_TIME);
 
-    // 4) Jedziemy z krokami
+    // 3) Timer
+    setRemaining(MAX_TIME);
+    startCountdown(MAX_TIME);
+
+    // 4) Kroki od zera
     setIdx(0);
     runStep(0);
   };
 
   const stopSession = () => {
+    runningRef.current = false;
     setIsRunning(false);
-    clearTimers();
+    stopCountdown();
     stopAV();
     setLevelPct(0);
   };
+
+  useEffect(() => {
+    return () => {
+      // cleanup na unmount
+      stopSession();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fmt = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(1, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -305,7 +309,6 @@ export default function PrompterPage() {
       <header className="topbar topbar--dense">
         <nav className="tabs">
           <a className="tab active" href="/day" aria-current="page">Prompter</a>
-          <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
         </nav>
 
         <div className="top-info compact">
@@ -332,29 +335,29 @@ export default function PrompterPage() {
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
         <video ref={videoRef} autoPlay playsInline muted className="cam" />
 
-        {/* Intro przed startem */}
+        {/* Intro */}
         {!isRunning && (
           <div className="overlay center">
             <div className="intro">
               <h2>Teleprompter</h2>
               <p>
                 Kliknij <b>Start</b>. Najpierw poprosimy o dostęp do kamery i mikrofonu.
-                Zegar ruszy dopiero po wyrażeniu zgody. Kroki <b>VERIFY</b> idą dalej,
-                gdy wykryjemy głos (bez rozpoznawania treści). Gdy jest cisza, po 7 sekundach
-                pojawi się delikatna podpowiedź.
+                Zegar zacznie odliczać dopiero po wyrażeniu zgody.
+                Kroki <b>VERIFY</b> zmieniają się, gdy naprawdę usłyszymy Twój głos;
+                jeśli jest cisza, po 7 s pokażemy delikatną podpowiedź.
               </p>
             </div>
           </div>
         )}
 
-        {/* Tekst podczas sesji */}
+        {/* Overlay z tekstem */}
         {isRunning && (
           <div className="overlay center">
             <div key={idx} className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
               {displayText || ""}
             </div>
 
-            {/* delikatna wskazówka (pod tekstem, po 7s ciszy) */}
+            {/* Podpowiedź (zawsze POD tekstem) */}
             {showSilenceHint && (
               <div className="mt-4 text-center opacity-70 text-sm">
                 Czy możesz powtórzyć na głos?
