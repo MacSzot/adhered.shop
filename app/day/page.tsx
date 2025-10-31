@@ -42,19 +42,18 @@ function getParam(name: string, fallback: string) {
   return (v && v.trim()) || fallback;
 }
 
-/* =============== PAGE =============== */
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Ustawienia
   const USER_NAME = "demo";
-  const DAY_LABEL = "Dzień " + (typeof window !== "undefined") ? getParam("day", "01") : "01";
+  const DAY_LABEL = "Dzień " + ((typeof window !== "undefined") ? getParam("day", "01") : "01"); // naprawione ().
   const MAX_TIME = 6 * 60; // 6 minut
 
   // Progi/czasy VAD
-  const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_MS = 7000;                    // ⬅️ 7 sekund ciszy na hint
-  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // 4 s po pierwszym głosie — przejście do kolejnego zdania
+  const SPEAKING_FRAMES_REQUIRED = 2;         // ile kolejnych ramek uznajemy za „stabilny” głos
+  const SILENCE_MS = 7000;                    // po tylu ms ciszy pokaż hint
+  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // po pierwszym stabilnym głosie – przeskok po 4 s
 
   // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -81,40 +80,29 @@ export default function PrompterPage() {
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
 
-  // --- TIMER: tylko ta sekcja została ZMIENIONA wobec Twojej wersji ---
-  // Stabilny licznik na bazie "deadline"
+  /* ---------- TIMER stabilny (odlicza tylko po zgodzie na media) ---------- */
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
 
   function startCountdown(seconds: number) {
-    stopCountdown(); // safety
+    stopCountdown();
     endAtRef.current = Date.now() + seconds * 1000;
-
-    // natychmiast ustaw właściwą wartość
     setRemaining(Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000)));
-
     countdownIdRef.current = window.setInterval(() => {
       if (!endAtRef.current) return;
       const secs = Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000));
       setRemaining(secs);
-      if (secs <= 0) {
-        stopSession(); // koniec sesji
-      }
+      if (secs <= 0) stopSession();
     }, 250);
   }
-
   function stopCountdown() {
-    if (countdownIdRef.current) {
-      window.clearInterval(countdownIdRef.current);
-      countdownIdRef.current = null;
-    }
+    if (countdownIdRef.current) { window.clearInterval(countdownIdRef.current); countdownIdRef.current = null; }
     endAtRef.current = null;
   }
-  // --- KONIEC: sekcja timera ---
 
-  // Timery/RAF oryginalnej logiki (zostawione)
-  const stepTimerRef = useRef<number | null>(null);
-  const advanceTimerRef = useRef<number | null>(null);
+  /* ---------- Timery kroku / VAD ---------- */
+  const stepTimerRef = useRef<number | null>(null);     // SAY okna
+  const advanceTimerRef = useRef<number | null>(null);  // 4s po mówieniu
   const rafRef = useRef<number | null>(null);
 
   // AV
@@ -123,9 +111,10 @@ export default function PrompterPage() {
   const streamRef = useRef<MediaStream | null>(null);
 
   // VAD pomocnicze
-  const heardThisStepRef = useRef(false);
-  const speakingFramesRef = useRef(0);
-  const lastSpeakTsRef = useRef<number>(0); // start kroku lub ostatni głos
+  const heardThisStepRef = useRef(false);       // czy w tym kroku już rozpoznaliśmy mowę (do uruchomienia 4s timera)
+  const speakingFramesRef = useRef(0);          // ile kolejnych ramek jest „głosem”
+  const lastSpeakTsRef = useRef<number>(0);     // do hintu – kiedy ostatnio był głos lub start kroku
+  const stepTokenRef = useRef<number>(0);       // token, by unieważniać timery przy zmianie kroku
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
@@ -183,6 +172,7 @@ export default function PrompterPage() {
       analyserRef.current = analyser;
 
       const data = new Uint8Array(analyser.fftSize);
+
       const loop = () => {
         if (!analyserRef.current) return;
         analyser.getByteTimeDomainData(data);
@@ -200,7 +190,7 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // czułość
+        // czułość VAD — lekko „podkręcona”, ale stabilizowana przez SPEAKING_FRAMES_REQUIRED
         const speakingNow = (rms > 0.020) || (peak > 0.045) || (vu > 8);
 
         if (speakingNow) {
@@ -209,14 +199,19 @@ export default function PrompterPage() {
             lastSpeakTsRef.current = performance.now();
             setSpeakingBlink(true);
 
+            // jeśli to pierwszy stabilny głos w tym kroku → ustawimy 4s do awansu
             const s = stepsRef.current[idxRef.current];
             if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               setShowSilenceHint(false);
+
+              // zapamiętaj token kroku; jeśli użytkownik zmieni się na inny step, timer się unieważni
+              const token = stepTokenRef.current;
               if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
-              const thisIdx = idxRef.current;
               advanceTimerRef.current = window.setTimeout(() => {
-                if (idxRef.current === thisIdx) gotoNext(thisIdx);
+                if (token === stepTokenRef.current) {
+                  gotoNext(idxRef.current);
+                }
               }, ADVANCE_AFTER_FIRST_SPEAK_MS);
             }
           }
@@ -224,7 +219,7 @@ export default function PrompterPage() {
           speakingFramesRef.current = 0;
         }
 
-        // HINT po 7s ciszy (liczymy od wejścia w krok lub od ostatniego głosu)
+        // HINT po 7s ciszy od wejścia w krok lub ostatniego głosu
         const silentFor = performance.now() - lastSpeakTsRef.current;
         const s = stepsRef.current[idxRef.current];
         if (s?.mode === "VERIFY") {
@@ -262,7 +257,7 @@ export default function PrompterPage() {
     }
   }
 
-  /* ---- 3) Timery + kroki (poza stoperem – bez zmian) ---- */
+  /* ---- 3) Timery kroków ---- */
   function clearStepTimers() {
     if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
     if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
@@ -273,15 +268,18 @@ export default function PrompterPage() {
     const s = stepsRef.current[i];
     if (!s) return;
 
+    // „nowy” krok – unieważnij stare timery poprzez zwiększenie tokenu
+    stepTokenRef.current++;
     clearStepTimers();
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      // start liczenia ciszy OD TERAZ
+      // start liczenia ciszy OD TERAZ (dla hinta)
       lastSpeakTsRef.current = performance.now();
       setDisplayText(s.target || "");
+      // czekamy na VAD → po 1. stabilnym głosie poleci 4s timer (ustawiany w pętli VAD)
     } else {
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
@@ -307,11 +305,11 @@ export default function PrompterPage() {
   const startSession = async () => {
     if (!stepsRef.current.length) return;
 
-    // 1) Permission + AV
+    // 1) Permission + AV (timer startuje dopiero po zgodzie)
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
-    // 2) Start sesji i TIMERA (nowy, stabilny stoper)
+    // 2) Start sesji i TIMERA (stabilny stoper)
     setIsRunning(true);
     startCountdown(MAX_TIME);
 
@@ -322,7 +320,7 @@ export default function PrompterPage() {
 
   const stopSession = () => {
     setIsRunning(false);
-    stopCountdown(); // ⬅️ zatrzymaj stoper
+    stopCountdown();
     clearStepTimers();
     stopAV();
     setLevelPct(0);
