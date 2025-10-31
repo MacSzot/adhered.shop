@@ -1,293 +1,696 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-/** ---------- Konfiguracja ---------- */
-const MAX_SESSION_SEC = 6 * 60; // 6 minut
-const HINT_1 = "Jeśli możesz, postaraj się przeczytać na głos.";
-const HINT_2 = "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.";
-const HINT_3 = "Jeśli chcesz kontynuować, dotknij ekranu.";
-const HINTS: Record<1 | 2 | 3, string> = { 1: HINT_1, 2: HINT_2, 3: HINT_3 };
+/* ================== TYPY ================== */
+type PlanStep = {
+  mode: "VERIFY" | "SAY";
+  target?: string;  // VERIFY — tekst do powtórzenia
+  prompt?: string;  // SAY — komenda/otwarte pytanie
+  prep_ms?: number; // opóźnienie przed startem recognition
+  dwell_ms?: number;// ile trwa okno SAY (mówienie + transkrypt)
+};
 
-type Step =
-  | { mode: "VERIFY"; text: string; dwellMs?: number }
-  | { mode: "SAY"; prompt: string; dwellMs?: number };
+/* ================== STAŁE ================== */
+const USER_NAME = "demo";
+const MAX_TIME_SEC = 6 * 60;         // 6 minut „cut-off” sesji
+const SILENCE_HINT_MS = 7000;        // po tylu ms ciszy pokaż hint
+const HARD_CAP_MS = 12000;           // maks. czas jednego kroku
+const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: po wykryciu głosu ile czekamy do NEXT
 
-const DAY3: Step[] = [
-  { mode: "VERIFY", text: "Jestem w bardzo dobrym miejscu.", dwellMs: 4000 },
-  { mode: "VERIFY", text: "Szacunek do siebie staje się naturalny.", dwellMs: 4000 },
-  { mode: "SAY", prompt: "Popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — Twoje słowa wyświetlą się na ekranie.", dwellMs: 12000 },
-  { mode: "VERIFY", text: "W moim wnętrzu dojrzewa spokój i zgoda.", dwellMs: 4000 },
-  { mode: "SAY", prompt: "Popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — Twoje słowa wyświetlą się na ekranie.", dwellMs: 12000 },
-  { mode: "VERIFY", text: "Doceniam to, jak wiele już zostało zrobione.", dwellMs: 4000 },
-  { mode: "SAY", prompt: "Popatrz na siebie i pogratuluj sobie. Zrób to z radością — Twoje słowa wyświetlą się na ekranie.", dwellMs: 12000 },
+// 1→2→3 i KONIEC (potem już nie przypominamy)
+const HINTS: string[] = [
+  "",
+  "Jeśli możesz, postaraj się przeczytać na głos.",
+  "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.",
+  "Jeśli chcesz kontynuować, dotknij ekranu.",
 ];
 
-/** ---------- Pomocnicze ---------- */
-const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+/* ================== PLAN DNIA ================== */
+async function loadDayPlanOrTxt(dayFileParam: string): Promise<PlanStep[]> {
+  try {
+    const r = await fetch(`/days/${dayFileParam}.plan.json`, { cache: "no-store" });
+    if (r.ok) {
+      const j = await r.json();
+      const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
+      if (steps.length) return steps;
+    }
+  } catch {}
+  try {
+    const r2 = await fetch(`/days/${dayFileParam}.txt`, { cache: "no-store" });
+    if (r2.ok) {
+      const txt = await r2.text();
+      return txt
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(line => ({ mode: "VERIFY" as const, target: line }));
+    }
+  } catch {}
 
+  // ——— Fallback (Dzień 3 z trzema otwartymi) ———
+  const fallback: PlanStep[] = [
+    { mode: "VERIFY", target: "Jestem w bardzo dobrym miejscu." },
+    { mode: "VERIFY", target: "Szacunek do siebie staje się naturalny." },
+    { mode: "VERIFY", target: "W moim wnętrzu dojrzewa spokój i zgoda." },
+
+    { mode: "SAY", prompt: "Popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — Twoje słowa wyświetlą się na ekranie.", prep_ms: 800, dwell_ms: 12000 },
+
+    { mode: "VERIFY", target: "Doceniam to, jak wiele już zostało zrobione." },
+    { mode: "VERIFY", target: "Moje tempo jest wystarczające." },
+
+    { mode: "SAY", prompt: "Popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — Twoje słowa wyświetlą się na ekranie.", prep_ms: 800, dwell_ms: 12000 },
+
+    { mode: "VERIFY", target: "Uznaję swoją historię taką, jaka jest." },
+    { mode: "VERIFY", target: "Podziwiam sposób przetrwania trudnych chwil." },
+
+    { mode: "SAY", prompt: "Popatrz na siebie i pogratuluj sobie. Zrób to z radością — Twoje słowa wyświetlą się na ekranie.", prep_ms: 800, dwell_ms: 12000 },
+
+    { mode: "VERIFY", target: "Szanuję wysiłek, który doprowadził mnie tutaj." },
+    { mode: "VERIFY", target: "Dobre słowo o sobie zaczyna brzmieć naturalnie." },
+  ];
+  return fallback;
+}
+
+/* ================== POMOCNICZE ================== */
+function getParam(name: string, fallback: string) {
+  if (typeof window === "undefined") return fallback;
+  const v = new URLSearchParams(window.location.search).get(name);
+  return (v && v.trim()) || fallback;
+}
+
+/* ================== KOMPONENT ================== */
 export default function PrompterPage() {
-  const [running, setRunning] = useState(false);
-  const [remain, setRemain] = useState(MAX_SESSION_SEC);
-  const [stepIdx, setStepIdx] = useState(0);
-  const [hintStage, setHintStage] = useState<0 | 1 | 2 | 3>(0);
-  const [transcript, setTranscript] = useState("");
-  const [level, setLevel] = useState(0);
-  const [err, setErr] = useState<string | null>(null);
-
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const acRef = useRef<AudioContext | null>(null);
+
+  const dayRaw = typeof window !== "undefined" ? getParam("day", "03") : "03";
+  const dayFileParam = dayRaw.padStart(2, "0");
+  const DAY_LABEL = (() => {
+    const n = parseInt(dayRaw, 10);
+    return Number.isNaN(n) ? dayRaw : String(n);
+  })();
+
+  const [steps, setSteps] = useState<PlanStep[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [displayText, setDisplayText] = useState<string>("");
+  const [isRunning, setIsRunning] = useState(false);
+
+  /* ----- ZEGAR SESJI ----- */
+  const [remaining, setRemaining] = useState(MAX_TIME_SEC);
+  const endAtRef = useRef<number | null>(null);
+  const countdownIdRef = useRef<number | null>(null);
+
+  function startCountdown(seconds: number) {
+    stopCountdown();
+    endAtRef.current = Date.now() + seconds * 1000;
+    setRemaining(Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000)));
+    countdownIdRef.current = window.setInterval(() => {
+      if (!endAtRef.current) return;
+      const secs = Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000));
+      setRemaining(secs);
+      if (secs <= 0) stopSession();
+    }, 250);
+  }
+  function stopCountdown() {
+    if (countdownIdRef.current) {
+      window.clearInterval(countdownIdRef.current);
+      countdownIdRef.current = null;
+    }
+    endAtRef.current = null;
+  }
+
+  /* ----- AUDIO/VIDEO + VAD ----- */
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const countdownRef = useRef<number | null>(null);
-  const stepTimerRef = useRef<number | null>(null);
-  const sayChunkTimerRef = useRef<number | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const rafRef = useRef<number | null>(null);
 
-  /** ---- Start/Stop sesji ---- */
-  const start = async () => {
-    cleanupAll();
-    setErr(null);
-    setTranscript("");
-    setStepIdx(0);
-    setHintStage(0);
-    setRemain(MAX_SESSION_SEC);
+  const [levelPct, setLevelPct] = useState(0);
+  const [micError, setMicError] = useState<string | null>(null);
+
+  async function startAV(): Promise<boolean> {
+    stopAV();
+    setMicError(null);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user" },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+        },
       });
       streamRef.current = stream;
       if (videoRef.current) (videoRef.current as any).srcObject = stream;
 
-      // AudioContext + analyser do VAD
-      const AC = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
-      const ac = new AC();
-      acRef.current = ac;
-      const src = ac.createMediaStreamSource(stream);
+      const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+      const ac = new Ctx();
+      audioCtxRef.current = ac;
+
       const analyser = ac.createAnalyser();
       analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.85;
-      src.connect(analyser);
+      analyser.smoothingTimeConstant = 0.86;
+      ac.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
 
-      // MediaRecorder → Whisper
-      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
-      const chunks: BlobPart[] = [];
-      mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-      mr.onstop = async () => {
-        if (!chunks.length) return;
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        chunks.length = 0;
-        await sendChunkToWhisper(blob);
-      };
-      mediaRecorderRef.current = mr;
-
-      // VAD pętla
-      const buf = new Uint8Array(1024);
-      let lastVoiceAt = Date.now();
+      const data = new Uint8Array(analyser.fftSize);
       const loop = () => {
-        if (!analyserRef.current) return;
-        analyserRef.current.getByteTimeDomainData(buf);
+        if (!analyserRef.current || !isRunningRef.current) return;
+        analyser.getByteTimeDomainData(data);
+
         let peak = 0, sumSq = 0;
-        for (let i = 0; i < buf.length; i++) {
-          const x = (buf[i] - 128) / 128;
+        for (let i = 0; i < data.length; i++) {
+          const x = (data[i] - 128) / 128;
           const a = Math.abs(x);
           if (a > peak) peak = a;
           sumSq += x * x;
         }
-        const rms = Math.sqrt(sumSq / buf.length);
-        const vu = Math.min(100, peak * 500);
-        setLevel((prev) => Math.max(vu, prev * 0.85));
+        const rms = Math.sqrt(sumSq / data.length);
+        const vu = Math.min(100, peak * 480);
+        setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        const speaking = rms > 0.02 || peak > 0.05 || vu > 8;
-        if (speaking) {
-          lastVoiceAt = Date.now();
-          if (hintStage > 0) setHintStage(0);
-        }
-        // po 7 s ciszy pokazuj kolejne wskazówki, max do 3
-        if (Date.now() - lastVoiceAt > 7000 && hintStage < 3) {
-          setHintStage((h) => ((h === 0 ? 1 : (h + 1) as 1 | 2 | 3)));
-          lastVoiceAt = Date.now();
-        }
+        // prosty VAD → zapamiętujemy czy ktoś mówił (do timingu VERIFY / hintów)
+        const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
+        onVadFrame(speakingNow);
 
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
-
-      // licznik sesji
-      countdownRef.current = window.setInterval(() => {
-        setRemain((r) => {
-          if (r <= 1) { stop(); return 0; }
-          return r - 1;
-        });
-      }, 1000);
-
-      setRunning(true);
-      runStep(0);
-    } catch (e: any) {
-      setErr(e?.message || "Nie udało się uruchomić kamery/mikrofonu.");
-      stop();
+      return true;
+    } catch (err: any) {
+      console.error("getUserMedia error:", err);
+      setMicError(err?.name === "NotAllowedError" ? "Brak zgody na mikrofon/kamerę." : "Nie udało się uruchomić mikrofonu/kamery.");
+      return false;
     }
-  };
+  }
 
-  const stop = () => {
-    setRunning(false);
-    cleanupAll();
-  };
-
-  const cleanupAll = () => {
+  function stopAV() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-
-    if (countdownRef.current) window.clearInterval(countdownRef.current);
-    countdownRef.current = null;
-
-    if (stepTimerRef.current) window.clearTimeout(stepTimerRef.current);
-    stepTimerRef.current = null;
-
-    if (sayChunkTimerRef.current) window.clearInterval(sayChunkTimerRef.current);
-    sayChunkTimerRef.current = null;
-
-    if (mediaRecorderRef.current) {
-      try { mediaRecorderRef.current.stop(); } catch {}
-      mediaRecorderRef.current = null;
-    }
-
-    if (acRef.current) { try { acRef.current.close(); } catch {} acRef.current = null; }
-    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
     analyserRef.current = null;
-    setLevel(0);
-  };
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch {}
+      audioCtxRef.current = null;
+    }
+  }
 
-  /** ---- Kroki ---- */
-  const runStep = (i: number) => {
-    if (!DAY3[i]) return;
-    setStepIdx(i);
-    setTranscript("");
+  /* ----- SAY: Web Speech API (transkrypt na GÓRZE) ----- */
+  const recognitionRef = useRef<any>(null);
+  const [sayTranscript, setSayTranscript] = useState("");
+  const sayActiveRef = useRef(false);
 
-    const s = DAY3[i];
-    const dwell = Math.max(2000, s.dwellMs ?? (s.mode === "SAY" ? 12000 : 4000));
+  function startSayCapture() {
+    sayActiveRef.current = true;
+    setSayTranscript("");
+    stopSayCapture(); // safety
 
-    // SAY → nagrywanie chunków co 4s
-    if (s.mode === "SAY" && mediaRecorderRef.current) {
-      try { mediaRecorderRef.current.start(); } catch {}
-      sayChunkTimerRef.current = window.setInterval(() => {
-        if (!mediaRecorderRef.current || mediaRecorderRef.current.state !== "recording") return;
-        mediaRecorderRef.current.stop();
-        try { mediaRecorderRef.current.start(); } catch {}
-      }, 4000);
+    const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SR) {
+      console.warn("Web Speech API niedostępne.");
+      return;
     }
 
-    stepTimerRef.current = window.setTimeout(() => {
-      if (sayChunkTimerRef.current) { window.clearInterval(sayChunkTimerRef.current); sayChunkTimerRef.current = null; }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") { try { mediaRecorderRef.current.stop(); } catch {} }
+    const rec = new SR();
+    recognitionRef.current = rec;
+    rec.lang = "pl-PL";
+    rec.continuous = true;
+    rec.interimResults = true;
 
-      const next = i + 1;
-      if (next < DAY3.length) runStep(next);
-      else stop();
-    }, dwell);
+    let buffer = "";
+    rec.onresult = (e: any) => {
+      let interim = "";
+      let finalText = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) finalText += res[0].transcript;
+        else interim += res[0].transcript;
+      }
+      const composed = (buffer + finalText + interim).trim();
+      setSayTranscript(composed);
+      if (finalText) buffer += finalText + " ";
+
+      // mówimy → wyłącz pierwszy hint (jeśli był)
+      if (hintStageRef.current === 1) setHintStage(0);
+    };
+    rec.onerror = (err: any) => console.warn("SpeechRecognition error:", err?.error || err);
+    rec.onend = () => {
+      if (sayActiveRef.current) {
+        try { rec.start(); } catch {}
+      }
+    };
+    try { rec.start(); } catch (e) { console.warn("SpeechRecognition start error:", e); }
+  }
+  function stopSayCapture() {
+    sayActiveRef.current = false;
+    const rec = recognitionRef.current;
+    if (rec) {
+      try { rec.onend = null; rec.stop(); } catch {}
+    }
+    recognitionRef.current = null;
+  }
+
+  /* ----- REFERENCJE BIEŻĄCYCH WARTOŚCI ----- */
+  const isRunningRef = useRef(isRunning);
+  const idxRef = useRef(idx);
+  const stepsRef = useRef<PlanStep[]>([]);
+  const heardThisStepRef = useRef(false);        // czy w VERIFY padł głos (do 4s auto-next)
+  const silenceTimerRef = useRef<number | null>(null);
+  const hardCapTimerRef = useRef<number | null>(null);
+  const advanceTimerRef = useRef<number | null>(null);
+
+  useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
+  useEffect(() => { idxRef.current = idx; }, [idx]);
+  useEffect(() => { stepsRef.current = steps; }, [steps]);
+
+  /* ----- HINTY: 1→2→3, a po 3 tap → wyłączamy już NA ZAWSZE ----- */
+  const [hintStage, _setHintStage] = useState<0 | 1 | 2 | 3>(0);
+  const hintStageRef = useRef<0 | 1 | 2 | 3>(0);
+  function setHintStage(v: 0 | 1 | 2 | 3) { hintStageRef.current = v; _setHintStage(v); }
+  const [hintsDisabledForever, setHintsDisabledForever] = useState(false);
+
+  function scheduleSilenceHint(i: number) {
+    if (hintsDisabledForever) return;
+    clearSilenceHint();
+    silenceTimerRef.current = window.setTimeout(() => {
+      if (idxRef.current !== i || hintsDisabledForever) return;
+      setHintStage(hintStageRef.current < 3 ? ((hintStageRef.current + 1) as 1 | 2 | 3) : 3);
+    }, SILENCE_HINT_MS);
+  }
+  function clearSilenceHint() {
+    if (silenceTimerRef.current) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }
+  function onUserTapAfterHint() {
+    if (hintStageRef.current === 3) {
+      setHintsDisabledForever(true);
+      setHintStage(0);
+    }
+  }
+
+  /* ----- VAD → zdarzenie ramki ----- */
+  const speakingFramesRef = useRef(0);
+  function onVadFrame(speakingNow: boolean) {
+    if (!isRunningRef.current) return;
+
+    if (speakingNow) {
+      speakingFramesRef.current += 1;
+      if (hintStageRef.current > 0) setHintStage(0);
+
+      const s = stepsRef.current[idxRef.current];
+      if (s?.mode === "VERIFY" && !heardThisStepRef.current && speakingFramesRef.current >= 2) {
+        heardThisStepRef.current = true;
+        clearTimeouts(["advance", "silence"]);
+        const thisIdx = idxRef.current;
+        advanceTimerRef.current = window.setTimeout(() => {
+          if (idxRef.current === thisIdx) gotoNext(thisIdx);
+        }, ADVANCE_AFTER_SPEAK_MS);
+      }
+    } else {
+      speakingFramesRef.current = 0;
+    }
+  }
+
+  function clearTimeouts(which: Array<"advance" | "silence" | "hard"> = ["advance", "silence", "hard"]) {
+    if (which.includes("advance") && advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
+    if (which.includes("silence")) clearSilenceHint();
+    if (which.includes("hard") && hardCapTimerRef.current) { window.clearTimeout(hardCapTimerRef.current); hardCapTimerRef.current = null; }
+  }
+
+  /* ----- KROKI ----- */
+  function runStep(i: number) {
+    if (!stepsRef.current.length) return;
+    const s = stepsRef.current[i];
+    if (!s) return;
+
+    clearTimeouts();
+    heardThisStepRef.current = false;
+    speakingFramesRef.current = 0;
+    setHintStage(0);
+
+    if (s.mode === "VERIFY") {
+      stopSayCapture();
+      setSayTranscript("");
+      setDisplayText(s.target || "");
+      scheduleSilenceHint(i);
+
+      hardCapTimerRef.current = window.setTimeout(() => {
+        if (idxRef.current === i) gotoNext(i);
+      }, HARD_CAP_MS);
+    } else {
+      stopSayCapture();
+      setDisplayText(s.prompt || "");
+      setSayTranscript("");
+      scheduleSilenceHint(i);
+
+      const prep = Number(s.prep_ms ?? 1000);
+      const dwell = Number(s.dwell_ms ?? 12000);
+
+      const thisIdx = i;
+      window.setTimeout(() => {
+        if (idxRef.current !== thisIdx) return;
+        startSayCapture();
+        hardCapTimerRef.current = window.setTimeout(() => {
+          if (idxRef.current !== thisIdx) return;
+          stopSayCapture();
+          setHintStage(0);
+          gotoNext(thisIdx);
+        }, dwell);
+      }, prep);
+    }
+  }
+
+  function gotoNext(i: number) {
+    clearTimeouts();
+    stopSayCapture();
+    const next = (i + 1) % stepsRef.current.length;
+    setIdx(next);
+    const n = stepsRef.current[next];
+    setDisplayText(n?.mode === "VERIFY" ? (n?.target || "") : (n?.prompt || ""));
+    runStep(next);
+  }
+
+  /* ----- START/STOP SESJI ----- */
+  const startSession = async () => {
+    if (!stepsRef.current.length) return;
+    const ok = await startAV();
+    if (!ok) { setIsRunning(false); return; }
+    setIsRunning(true);
+    setHintsDisabledForever(false);
+    setHintStage(0);
+    startCountdown(MAX_TIME_SEC);
+    setIdx(0);
+    const first = stepsRef.current[0];
+    setDisplayText(first?.mode === "VERIFY" ? (first?.target || "") : (first?.prompt || ""));
+    runStep(0);
   };
 
-  /** ---- Whisper ---- */
-  const sendChunkToWhisper = async (blob: Blob) => {
-    try {
-      const fd = new FormData();
-      fd.append("audio", blob, "clip.webm");
-      const r = await fetch("/api/whisper", { method: "POST", body: fd });
-      if (!r.ok) return;
-      const j = await r.json();
-      const t = (j?.text || "").trim();
-      if (t) setTranscript((prev) => (prev ? prev + " " + t : t));
-    } catch { /* spokojnie – fallback tylko na VAD */ }
+  const stopSession = () => {
+    setIsRunning(false);
+    stopCountdown();
+    clearTimeouts(["advance", "silence", "hard"]);
+    stopSayCapture();
+    stopAV();
+    setLevelPct(0);
+    setHintStage(0);
   };
 
-  /** ---- Layout guards ---- */
+  /* ----- INIT PLAN ----- */
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    (async () => {
+      const stepsLoaded = await loadDayPlanOrTxt(dayFileParam);
+      setSteps(stepsLoaded);
+      setIdx(0);
+      setDisplayText(stepsLoaded[0]?.mode === "VERIFY" ? (stepsLoaded[0]?.target || "") : (stepsLoaded[0]?.prompt || ""));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const current = DAY3[stepIdx];
+  /* ================== RENDER ================== */
+  const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  const isSay = steps[idx]?.mode === "SAY";
 
   return (
-    <main style={styles.root}>
-      {/* Topbar */}
+    <main style={styles.root} onClick={() => onUserTapAfterHint()}>
+      {/* TOP BAR */}
       <header style={styles.topbar}>
-        <div style={styles.badgeRow}>
-          <span style={styles.meta}><b>Użytkownik:</b> demo</span>
-          <span style={{ padding: "0 8px", opacity: 0.6 }}>•</span>
-          <span style={styles.meta}><b>Dzień programu:</b> 3</span>
+        <nav style={styles.tabs}>
+          <a style={{ ...styles.tab, ...styles.tabActive }} href="/day" aria-current="page">Prompter</a>
+          <span style={{ ...styles.tab, opacity: 0.35 }} aria-disabled="true" title="Wkrótce">Rysownik</span>
+        </nav>
+        <div style={styles.topInfo}>
+          <span style={styles.meta}><b>Użytkownik:</b> {USER_NAME}</span>
+          <span style={styles.dot}>•</span>
+          <span style={styles.meta}><b>Dzień programu:</b> {DAY_LABEL}</span>
         </div>
         <div>
-          {!running ? (
-            <button style={styles.btn} onClick={start}>Start</button>
+          {!isRunning ? (
+            <button style={styles.btn} onClick={startSession}>Start</button>
           ) : (
-            <button style={styles.btn} onClick={stop}>Stop</button>
+            <button style={styles.btn} onClick={stopSession}>Stop</button>
           )}
         </div>
       </header>
 
-      {/* Timer */}
-      <div style={styles.timer}>{fmt(remain)}</div>
+      {/* TIMER */}
+      <div style={styles.timer}>{fmt(remaining)}</div>
 
-      {/* Scena */}
+      {/* SCENA */}
       <div style={styles.stage}>
-        <video ref={videoRef} autoPlay playsInline muted style={styles.cam} />
-        <div style={styles.overlay}>
-          {/* środek */}
-          <div style={styles.centerBlock}>
-            {current?.mode === "VERIFY" && <div style={styles.verifyText}>{current.text}</div>}
-            {current?.mode === "SAY" && <div style={styles.verifyText}>{current.prompt}</div>}
+        {/* kamera */}
+        <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+
+        {/* gradient kosmetyczny (czytelność tekstu) */}
+        <div style={styles.gradientTop} />
+        <div style={styles.gradientBottom} />
+
+        {/* INTRO (gdy nie uruchomiono) */}
+        {!isRunning && (
+          <div style={styles.overlayCenter}>
+            <div style={styles.introWrap}>
+              <p style={styles.introLine}>
+                Prosimy o powtarzanie na głos wyświetlanych treści.
+              </p>
+              <p style={{ ...styles.introLine, marginTop: 10 }}>
+                Aktywowano analizator dźwięku MeRoar™
+              </p>
+              {micError && (
+                <p style={styles.micError}>{micError} — upewnij się, że przeglądarka ma dostęp do mikrofonu i kamery.</p>
+              )}
+            </div>
           </div>
+        )}
 
-          {/* transkrypcja u góry */}
-          {transcript && <div style={styles.transcriptTop}>{transcript}</div>}
+        {/* SESJA */}
+        {isRunning && (
+          <>
+            {/* Tekst główny (VERIFY/SAY) — ZAWSZE CENTRUM */}
+            <div style={styles.centerWrap}>
+              <div style={styles.centerText}>{displayText}</div>
+            </div>
 
-          {/* przypominajka – max 3 razy */}
-          {hintStage > 0 && <div style={styles.hintCenter}>{HINTS[hintStage]}</div>}
+            {/* SAY — transkrypt NA GÓRZE (bez tła) */}
+            {isSay && (
+              <div style={styles.transcriptTop}>{sayTranscript}</div>
+            )}
+
+            {/* HINT: 1..3 — ~70% wysokości, jeden w danym momencie, po 3 tap → off forever */}
+            {hintStage > 0 && !hintsDisabledForever && (
+              <div style={styles.hint}>{HINTS[hintStage]}</div>
+            )}
+          </>
+        )}
+
+        {/* VU-Meter (pionowy, z prawej) */}
+        <div style={styles.vu}>
+          <div style={{ ...styles.vuFill, height: `${levelPct}%` }} />
         </div>
-
-        {/* VU-meter */}
-        <div style={styles.meter}><div style={{ ...styles.meterFill, height: `${level}%` }} /></div>
       </div>
-
-      {err && <div style={styles.error}>{err}</div>}
     </main>
   );
 }
 
-/** ---------- Style ---------- */
+/* ================== STYLE (inline, bez klas CSS) ================== */
 const styles: Record<string, React.CSSProperties> = {
-  root: { position: "fixed", inset: 0, background: "#000", color: "#fff", fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" },
+  root: {
+    position: "fixed",
+    inset: 0,
+    background: "#000",
+    color: "#fff",
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+    userSelect: "none",
+    WebkitUserSelect: "none",
+  },
 
-  topbar: { position: "absolute", left: 0, right: 0, top: 0, height: 64, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", background: "rgba(20,20,20,0.55)", backdropFilter: "blur(6px)", zIndex: 20 },
-  badgeRow: { display: "flex", alignItems: "center", gap: 4, fontSize: 14 },
-  meta: { opacity: 0.95 },
-  btn: { padding: "8px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.08)", color: "#fff", cursor: "pointer" },
+  topbar: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 64,
+    display: "grid",
+    gridTemplateColumns: "1fr auto auto",
+    gap: 16,
+    alignItems: "center",
+    padding: "10px 14px",
+    background: "rgba(0,0,0,0.45)",
+    WebkitBackdropFilter: "saturate(180%) blur(8px)" as any,
+    backdropFilter: "saturate(180%) blur(8px)",
+    zIndex: 50,
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
 
-  timer: { position: "absolute", top: 84, left: 0, right: 0, textAlign: "center", fontSize: 46, fontWeight: 800, textShadow: "0 2px 6px rgba(0,0,0,0.6)", zIndex: 15 },
+  tabs: { display: "flex", gap: 10 },
+  tab: {
+    display: "inline-flex",
+    alignItems: "center",
+    height: 34,
+    padding: "0 16px",
+    borderRadius: 999,
+    background: "rgba(255,255,255,0.08)",
+    color: "#fff",
+    textDecoration: "none",
+    fontSize: 14,
+  },
+  tabActive: { background: "rgba(255,255,255,0.18)", fontWeight: 600 },
 
-  stage: { position: "absolute", inset: 0, overflow: "hidden" },
-  cam: { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" },
-  overlay: { position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: "84px 16px 16px 16px" },
+  topInfo: { display: "flex", alignItems: "center", gap: 8, color: "rgba(255,255,255,0.9)", fontSize: 15, fontWeight: 600 },
+  meta: {},
+  dot: { opacity: 0.6 },
 
-  centerBlock: { maxWidth: 800, textAlign: "center", padding: "0 12px" },
-  verifyText: { fontSize: 28, lineHeight: 1.35, textShadow: "0 2px 6px rgba(0,0,0,0.55)" },
+  btn: {
+    height: 34,
+    padding: "0 18px",
+    borderRadius: 12,
+    background: "linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.28))",
+    color: "#fff",
+    border: "1px solid rgba(255,255,255,0.22)",
+    fontWeight: 700,
+    cursor: "pointer",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.28)",
+  },
 
-  transcriptTop: { position: "absolute", top: 128, left: 0, right: 0, textAlign: "center", fontSize: 18, padding: "0 16px", textShadow: "0 2px 6px rgba(0,0,0,0.55)", pointerEvents: "none" },
+  timer: {
+    position: "fixed",
+    top: 72,
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    fontSize: "clamp(28px, 4.2vw, 44px)",
+    fontWeight: 900,
+    letterSpacing: 0.5,
+    textShadow: "0 2px 8px rgba(0,0,0,0.55)",
+    zIndex: 40,
+  },
 
-  hintCenter: { position: "absolute", bottom: "18%", left: 0, right: 0, textAlign: "center", fontSize: 18, opacity: 0.95, textShadow: "0 2px 6px rgba(0,0,0,0.55)", pointerEvents: "none" },
+  stage: {
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
+    overflow: "hidden",
+  },
 
-  meter: { position: "absolute", top: 84, bottom: 16, right: 10, width: 8, background: "rgba(255,255,255,0.2)", borderRadius: 8, overflow: "hidden" },
-  meterFill: { position: "absolute", left: 0, right: 0, bottom: 0, background: "#7CFC00" },
+  video: {
+    position: "absolute",
+    inset: 0,
+    width: "100%",
+    height: "100svh",
+    objectFit: "cover",
+    transform: "scaleX(-1)", // lustro
+    background: "#000",
+  },
 
-  error: { position: "absolute", bottom: 12, left: 12, right: 12, padding: "10px 12px", background: "rgba(160,0,0,0.6)", borderRadius: 10, fontSize: 14 },
+  gradientTop: {
+    position: "absolute",
+    top: 0, left: 0, right: 0, height: 160,
+    background: "linear-gradient(180deg, rgba(0,0,0,0.72), rgba(0,0,0,0))",
+    pointerEvents: "none",
+    zIndex: 5,
+  },
+  gradientBottom: {
+    position: "absolute",
+    bottom: 0, left: 0, right: 0, height: 220,
+    background: "linear-gradient(0deg, rgba(0,0,0,0.70), rgba(0,0,0,0))",
+    pointerEvents: "none",
+    zIndex: 5,
+  },
+
+  overlayCenter: {
+    position: "absolute",
+    inset: 0,
+    display: "grid",
+    placeItems: "center",
+    padding: "0 24px",
+    zIndex: 10,
+  },
+
+  introWrap: {
+    maxWidth: 560,
+    textAlign: "center",
+    lineHeight: 1.45,
+    background: "rgba(0,0,0,0.35)",
+    padding: "16px 18px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.08)",
+    boxShadow: "0 12px 36px rgba(0,0,0,0.35)",
+  },
+  introLine: { fontSize: 18, color: "rgba(255,255,255,0.95)" },
+  micError: { marginTop: 14, color: "#ffb3b3", fontSize: 14 },
+
+  centerWrap: {
+    position: "absolute",
+    inset: 0,
+    display: "grid",
+    placeItems: "center",
+    padding: "0 24px",
+    textAlign: "center",
+    zIndex: 8,
+  },
+  centerText: {
+    fontSize: "clamp(22px, 3.8vw, 34px)",
+    lineHeight: 1.45,
+    maxWidth: 760,
+    whiteSpace: "pre-wrap",
+    textShadow: "0 2px 10px rgba(0,0,0,0.55)",
+    fontWeight: 700,
+    letterSpacing: 0.2,
+  },
+
+  transcriptTop: {
+    position: "absolute",
+    top: 112,
+    left: 16,
+    right: 16,
+    textAlign: "center",
+    fontSize: "clamp(18px, 3.3vw, 24px)",
+    lineHeight: 1.35,
+    color: "rgba(255,255,255,0.98)",
+    pointerEvents: "none",
+    textShadow: "0 1px 6px rgba(0,0,0,0.65)",
+    minHeight: 26,
+    fontWeight: 600,
+    zIndex: 9,
+  },
+
+  hint: {
+    position: "absolute",
+    left: 0, right: 0,
+    top: "70%",
+    padding: "0 24px",
+    textAlign: "center",
+    fontSize: 16,
+    lineHeight: 1.35,
+    color: "rgba(255,255,255,0.95)",
+    textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+    pointerEvents: "none",
+    zIndex: 12,
+  },
+
+  vu: {
+    position: "absolute",
+    right: 10,
+    top: 82,
+    bottom: 14,
+    width: 7,
+    borderRadius: 7,
+    background: "rgba(255,255,255,0.08)",
+    overflow: "hidden",
+    zIndex: 12,
+    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
+  },
+  vuFill: {
+    position: "absolute",
+    bottom: 0, left: 0, right: 0,
+    background: "linear-gradient(180deg,#7cdcff 0%,#6aff93 52%,#ffbe5c 100%)",
+    borderRadius: 7,
+    transition: "height 110ms linear",
+    boxShadow: "0 0 18px rgba(255,255,255,0.15)",
+  },
 };
+
 
 
 }
