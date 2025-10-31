@@ -16,9 +16,8 @@ export async function POST(req: NextRequest) {
 
     const resp = await openai.audio.transcriptions.create({
       file,
-      model: "gpt-4o-mini-transcribe", // możesz zmienić na "whisper-1"
-      // language: "pl", // (opcjonalnie)
-      // response_format: "json", // (domyślne)
+      model: "gpt-4o-mini-transcribe", // lub "whisper-1"
+      // language: "pl", // opcjonalnie
     });
 
     return NextResponse.json({ text: resp.text ?? "" });
@@ -31,3 +30,4 @@ export async function POST(req: NextRequest) {
 export async function GET() {
   return NextResponse.json({ ok: true, service: "whisper" });
 }
+
