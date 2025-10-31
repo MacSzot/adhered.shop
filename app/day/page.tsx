@@ -690,10 +690,3 @@ const styles: Record<string, React.CSSProperties> = {
     boxShadow: "0 0 18px rgba(255,255,255,0.15)",
   },
 };
-
-
-
-}
-
-
-
