@@ -53,19 +53,21 @@ export default function PrompterPage() {
 
   // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_MS = 7000;                    // ⬅️ 7 sekund ciszy na hint
-  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // 4 s po pierwszym głosie — przejście do kolejnego zdania
+  const SILENCE_MS = 7000;
+  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;
 
-  // Stany
+  // Stany główne
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
 
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
+  const remainingRef = useRef(remaining);
+  useEffect(() => { remainingRef.current = remaining; }, [remaining]);
+
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
-
   const [micError, setMicError] = useState<string | null>(null);
 
   // Hint (ref-bezpieczny)
@@ -75,17 +77,20 @@ export default function PrompterPage() {
 
   const [speakingBlink, setSpeakingBlink] = useState(false);
 
-  // Refy „świeżych” wartości
+  // Refy bieżących wartości
   const idxRef = useRef(idx);
   const stepsRef = useRef<PlanStep[]>([]);
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
 
   // Timery/RAF
-  const sessionTimerRef = useRef<number | null>(null);
   const stepTimerRef = useRef<number | null>(null);
   const advanceTimerRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const rafVadRef = useRef<number | null>(null);
+
+  // **CHRONO** (nowy, zamiast setInterval)
+  const chronoRafRef = useRef<number | null>(null);
+  const chronoStartTsRef = useRef<number | null>(null);
 
   // AV
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -95,7 +100,7 @@ export default function PrompterPage() {
   // VAD pomocnicze
   const heardThisStepRef = useRef(false);
   const speakingFramesRef = useRef(0);
-  const lastSpeakTsRef = useRef<number>(0); // start kroku lub ostatni głos
+  const lastSpeakTsRef = useRef<number>(0);
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
@@ -194,7 +199,7 @@ export default function PrompterPage() {
           speakingFramesRef.current = 0;
         }
 
-        // HINT po 7s ciszy (liczymy od wejścia w krok lub od ostatniego głosu)
+        // HINT po 7s ciszy
         const silentFor = performance.now() - lastSpeakTsRef.current;
         const s = stepsRef.current[idxRef.current];
         if (s?.mode === "VERIFY") {
@@ -205,9 +210,9 @@ export default function PrompterPage() {
         }
 
         window.setTimeout(() => setSpeakingBlink(false), 120);
-        rafRef.current = requestAnimationFrame(loop);
+        rafVadRef.current = requestAnimationFrame(loop);
       };
-      rafRef.current = requestAnimationFrame(loop);
+      rafVadRef.current = requestAnimationFrame(loop);
 
       return true;
     } catch (err: any) {
@@ -222,7 +227,7 @@ export default function PrompterPage() {
   }
 
   function stopAV() {
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (rafVadRef.current) { cancelAnimationFrame(rafVadRef.current); rafVadRef.current = null; }
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
@@ -232,9 +237,40 @@ export default function PrompterPage() {
     }
   }
 
-  /* ---- 3) Timery + kroki ---- */
-  function clearAllTimers() {
-    if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
+  /* ---- 3) Chronometr na requestAnimationFrame ---- */
+  function startChrono() {
+    chronoStartTsRef.current = performance.now();
+    // odśwież od razu 6:00 → 5:59 bez czekania sekundy
+    setRemaining(MAX_TIME);
+
+    const tick = () => {
+      if (!chronoStartTsRef.current) return;
+      const elapsed = Math.floor((performance.now() - chronoStartTsRef.current) / 1000);
+      const nextRemaining = Math.max(0, MAX_TIME - elapsed);
+      if (nextRemaining !== remainingRef.current) {
+        remainingRef.current = nextRemaining;
+        setRemaining(nextRemaining);
+      }
+      if (nextRemaining > 0 && isRunning) {
+        chronoRafRef.current = requestAnimationFrame(tick);
+      } else {
+        // auto-stop przy 0
+        setIsRunning(false);
+        stopAV();
+        setLevelPct(0);
+      }
+    };
+    chronoRafRef.current = requestAnimationFrame(tick);
+  }
+
+  function stopChrono() {
+    if (chronoRafRef.current) cancelAnimationFrame(chronoRafRef.current);
+    chronoRafRef.current = null;
+    chronoStartTsRef.current = null;
+  }
+
+  /* ---- 4) Timery kroków ---- */
+  function clearStepTimers() {
     if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
     if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
   }
@@ -244,13 +280,12 @@ export default function PrompterPage() {
     const s = stepsRef.current[i];
     if (!s) return;
 
-    clearAllTimers();
+    clearStepTimers();
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      // start liczenia ciszy OD TERAZ
       lastSpeakTsRef.current = performance.now();
       setDisplayText(s.target || "");
     } else {
@@ -267,14 +302,14 @@ export default function PrompterPage() {
   }
 
   function gotoNext(i: number) {
-    clearAllTimers();
+    clearStepTimers();
     setShowSilenceHint(false);
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
     runStep(next);
   }
 
-  /* ---- 4) Start/Stop sesji ---- */
+  /* ---- 5) Start/Stop sesji ---- */
   const startSession = async () => {
     if (!stepsRef.current.length) return;
 
@@ -282,26 +317,12 @@ export default function PrompterPage() {
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
-    // 2) Start sesji i TIMERA — bez zależności od refów
+    // 2) Start sesji + chrono (RAf)
     setIsRunning(true);
     setRemaining(MAX_TIME);
+    startChrono();
 
-    if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
-    sessionTimerRef.current = window.setInterval(() => {
-      setRemaining(prev => {
-        if (prev <= 1) {
-          // zatrzymaj wszystko przy 0
-          if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
-          setIsRunning(false);
-          stopAV();
-          setLevelPct(0);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    // 3) Start kroków
+    // 3) Krok 0
     setIdx(0);
     setDisplayText(stepsRef.current[0]?.mode === "VERIFY" ? (stepsRef.current[0].target || "") : (stepsRef.current[0]?.prompt || ""));
     runStep(0);
@@ -309,12 +330,13 @@ export default function PrompterPage() {
 
   const stopSession = () => {
     setIsRunning(false);
-    clearAllTimers();
+    stopChrono();
+    clearStepTimers();
     stopAV();
     setLevelPct(0);
   };
 
-  /* ---- 5) Render ---- */
+  /* ---- 6) Render ---- */
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(1, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
