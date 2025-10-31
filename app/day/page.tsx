@@ -52,9 +52,9 @@ export default function PrompterPage() {
   const MAX_TIME = 6 * 60; // 6 minut
 
   // Progi/czasy VAD
-  const SPEAKING_FRAMES_REQUIRED = 2;           // ile kolejnych „mówiących” ramek, by uznać że mówimy
+  const SPEAKING_FRAMES_REQUIRED = 2;           // anty-klik: wymagaj 2 kolejnych „mówiących” ramek
   const SILENCE_MS = 1500;                      // po tylu ms ciszy pokaż hint
-  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;    // po pierwszym głosie czekamy 4 s i dopiero przełączamy
+  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;    // 4 s po pierwszym głosie przełącz krok
 
   // Stany UI
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -66,9 +66,17 @@ export default function PrompterPage() {
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
 
-  const [showSilenceHint, setShowSilenceHint] = useState(false);
-  const [speakingBlink, setSpeakingBlink] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+
+  // HINT zarządzany ref-bezpiecznie (unikamy „starych” wartości w pętli audio)
+  const [showSilenceHint, _setShowSilenceHint] = useState(false);
+  const showSilenceHintRef = useRef(false);
+  const setShowSilenceHint = (v: boolean) => {
+    showSilenceHintRef.current = v;
+    _setShowSilenceHint(v);
+  };
+
+  const [speakingBlink, setSpeakingBlink] = useState(false);
 
   // Refy „świeżych” wartości
   const isRunningRef = useRef(isRunning);
@@ -90,9 +98,9 @@ export default function PrompterPage() {
   const streamRef = useRef<MediaStream | null>(null);
 
   // VAD pomocnicze
-  const heardThisStepRef = useRef(false);       // czy w tym kroku już padł głos (do startu 4 s)
+  const heardThisStepRef = useRef(false);       // czy w tym kroku padł już głos (do 4s licznika)
   const speakingFramesRef = useRef(0);          // licznik kolejnych „mówiących” ramek
-  const lastSpeakTsRef = useRef<number>(0);     // kiedy ostatnio był głos
+  const lastSpeakTsRef = useRef<number>(0);     // kiedy ostatnio był głos (lub start kroku)
 
   /* ---------- 1) Wczytanie planu ---------- */
   useEffect(() => {
@@ -118,7 +126,7 @@ export default function PrompterPage() {
     stopAV();
     setMicError(null);
     speakingFramesRef.current = 0;
-    lastSpeakTsRef.current = performance.now();
+    // nie ustawiamy lastSpeakTsRef tutaj — ustawimy go NA WEJŚCIU W KROK, żeby hint nie wyskakiwał od razu
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -150,6 +158,7 @@ export default function PrompterPage() {
       ac.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
 
+      // Start pętli DOPIERO po pełnej inicjalizacji
       const data = new Uint8Array(analyser.fftSize);
       const loop = () => {
         if (!analyserRef.current) return;
@@ -168,7 +177,7 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // Czułość delikatnie zwiększona: (było ok. 0.025/0.06/10)
+        // Czułość nieco wyższa niż wcześniej
         const speakingNow = (rms > 0.020) || (peak > 0.045) || (vu > 8);
 
         if (speakingNow) {
@@ -178,10 +187,9 @@ export default function PrompterPage() {
             lastSpeakTsRef.current = performance.now();
             setSpeakingBlink(true);
 
-            // Jeśli VERIFY i jeszcze nie rozpoczęliśmy 4s okna → start
-            const running = isRunningRef.current;
+            // Jeśli VERIFY i nie odpaliliśmy jeszcze 4s licznika → odpal
             const s = stepsRef.current[idxRef.current];
-            if (running && s?.mode === "VERIFY" && !heardThisStepRef.current) {
+            if (isRunningRef.current && s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               setShowSilenceHint(false);
               if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
@@ -192,24 +200,21 @@ export default function PrompterPage() {
             }
           }
         } else {
-          // reset ciągłości „mówienia”
+          // brak mowy — wyzeruj ciągłość
           speakingFramesRef.current = 0;
         }
 
-        // Pokazuj/znikaj hint zależnie od ciszy
+        // Pokazuj/znikaj hint zależnie od ciszy — LICZONE OD STARTU KROKU
         const silentFor = performance.now() - lastSpeakTsRef.current;
-        const shouldShowHint = silentFor >= SILENCE_MS;
-        // Pokaż hint tylko w trakcie VERIFY (w SAY nie ma sensu)
         const s = stepsRef.current[idxRef.current];
         if (isRunningRef.current && s?.mode === "VERIFY") {
-          if (shouldShowHint && !showSilenceHint) setShowSilenceHint(true);
-          if (!shouldShowHint && showSilenceHint) setShowSilenceHint(false);
-        } else {
-          if (showSilenceHint) setShowSilenceHint(false);
+          if (silentFor >= SILENCE_MS && !showSilenceHintRef.current) setShowSilenceHint(true);
+          if (silentFor < SILENCE_MS && showSilenceHintRef.current) setShowSilenceHint(false);
+        } else if (showSilenceHintRef.current) {
+          setShowSilenceHint(false);
         }
 
         window.setTimeout(() => setSpeakingBlink(false), 120);
-
         rafRef.current = requestAnimationFrame(loop);
       };
       rafRef.current = requestAnimationFrame(loop);
@@ -252,15 +257,17 @@ export default function PrompterPage() {
     clearAllTimers();
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
-    // Nie pokazuj od razu hintu — pojawi się dopiero gdy cisza ≥ SILENCE_MS
+
+    // hint off na starcie kroku
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
+      // USTAWIAMY PUNKT ODNIESIENIA CISZY TU — od wejścia w krok
+      lastSpeakTsRef.current = performance.now();
       setDisplayText(s.target || "");
-      // brak automatycznego „hard cap” — czekamy na pierwszy głos
-      // po pierwszym głosie zadziała 4s przejście ustawione w pętli VAD
+      // bez „hard cap”: czekamy, aż użytkownik cokolwiek powie, wtedy 4 s i dalej
     } else {
-      // Tryb SAY — pozostaje prosty (bez Whispera)
+      // Tryb SAY — MVP (bez weryfikacji treści)
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
       setDisplayText(s.prompt || "");
@@ -285,17 +292,18 @@ export default function PrompterPage() {
   const startSession = async () => {
     if (!stepsRef.current.length) return;
 
-    // Najpierw AV — jeśli odmowa, nie startujemy
+    // Najpierw AV — jeśli odmowa, nie startujemy i nie rusza timer
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
+    // wszystko gotowe → start sesji + timer
     setIsRunning(true);
     setRemaining(MAX_TIME);
 
-    // Timer sesji startuje po AV
     if (sessionTimerRef.current) { window.clearInterval(sessionTimerRef.current); sessionTimerRef.current = null; }
     sessionTimerRef.current = window.setInterval(() => {
       setRemaining(prev => {
+        if (!isRunningRef.current) return prev;
         if (prev <= 1) { stopSession(); return 0; }
         return prev - 1;
       });
@@ -348,8 +356,8 @@ export default function PrompterPage() {
               <h2>Teleprompter</h2>
               <p>
                 Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.
-                Kroki <b>VERIFY</b> trwają w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przechodzimy dalej.
-                Gdy jest cisza, pokażemy prośbę o powtórzenie.
+                Kroki <b>VERIFY</b> stoją w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przejdziemy dalej.
+                W ciszy pokażemy prośbę o powtórzenie.
               </p>
               {micError && (
                 <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError} — sprawdź uprawnienia przeglądarki.</p>
