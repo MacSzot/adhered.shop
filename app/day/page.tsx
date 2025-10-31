@@ -88,7 +88,7 @@ export default function PrompterPage() {
   const advanceTimerRef = useRef<number | null>(null);
   const rafVadRef = useRef<number | null>(null);
 
-  // **CHRONO** (nowy, zamiast setInterval)
+  // **CHRONO** (na RAF)
   const chronoRafRef = useRef<number | null>(null);
   const chronoStartTsRef = useRef<number | null>(null);
 
@@ -127,9 +127,14 @@ export default function PrompterPage() {
     setMicError(null);
     speakingFramesRef.current = 0;
 
+    // ostrzeżenie bez HTTPS
+    if (typeof window !== "undefined" && location.protocol !== "https:" && location.hostname !== "localhost") {
+      console.warn("getUserMedia wymaga HTTPS na produkcji.");
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: { facingMode: "user" },
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
@@ -139,14 +144,28 @@ export default function PrompterPage() {
       });
 
       streamRef.current = stream;
-      if (videoRef.current) (videoRef.current as any).srcObject = stream;
 
+      // VIDEO: przypnij źródło i wymuś play (autoplay policy)
+      const v = videoRef.current;
+      if (v) {
+        (v as any).srcObject = stream;
+        v.onloadedmetadata = () => {
+          v.play().catch(() => {
+            // niektóre przeglądarki wymagają gestu użytkownika
+          });
+        };
+        // podwójna próba (czasem onloadedmetadata nie strzela na mobilnych)
+        try { await v.play(); } catch {}
+      }
+
+      // AUDIO: AudioContext + Analyser
       const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
       const ac = new Ctx();
       audioCtxRef.current = ac;
 
       if (ac.state === "suspended") {
-        await ac.resume().catch(() => {});
+        // Safari/iOS – wznowimy po kliknięciu (Start)
+        try { await ac.resume(); } catch {}
         const resumeOnClick = () => ac.resume().catch(() => {});
         document.addEventListener("click", resumeOnClick, { once: true });
       }
@@ -175,7 +194,7 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // czułość
+        // czułość (lekko podbita vs poprzednio)
         const speakingNow = (rms > 0.020) || (peak > 0.045) || (vu > 8);
 
         if (speakingNow) {
@@ -219,7 +238,7 @@ export default function PrompterPage() {
       console.error("getUserMedia error:", err);
       setMicError(
         err?.name === "NotAllowedError"
-          ? "Brak zgody na mikrofon/kamerę."
+          ? "Brak zgody na mikrofon/kamerę. Sprawdź uprawnienia przeglądarki dla tej domeny."
           : "Nie udało się uruchomić mikrofonu/kamery."
       );
       return false;
@@ -240,7 +259,6 @@ export default function PrompterPage() {
   /* ---- 3) Chronometr na requestAnimationFrame ---- */
   function startChrono() {
     chronoStartTsRef.current = performance.now();
-    // odśwież od razu 6:00 → 5:59 bez czekania sekundy
     setRemaining(MAX_TIME);
 
     const tick = () => {
@@ -254,7 +272,6 @@ export default function PrompterPage() {
       if (nextRemaining > 0 && isRunning) {
         chronoRafRef.current = requestAnimationFrame(tick);
       } else {
-        // auto-stop przy 0
         setIsRunning(false);
         stopAV();
         setLevelPct(0);
@@ -317,7 +334,7 @@ export default function PrompterPage() {
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
-    // 2) Start sesji + chrono (RAf)
+    // 2) Start sesji + chrono
     setIsRunning(true);
     setRemaining(MAX_TIME);
     startChrono();
@@ -370,12 +387,12 @@ export default function PrompterPage() {
             <div className="intro">
               <h2>Teleprompter</h2>
               <p>
-                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b>.
+                Kliknij <b>Start</b> i udziel dostępu do <b>kamery i mikrofonu</b> (HTTPS wymagany).
                 Kroki <b>VERIFY</b> stoją w miejscu; gdy usłyszymy Twój głos, po <b>4 sekundach</b> przejdziemy dalej.
                 W ciszy pokażemy prośbę o powtórzenie <b>po 7 sekundach</b>.
               </p>
               {micError && (
-                <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError} — sprawdź uprawnienia przeglądarki.</p>
+                <p style={{ marginTop: 12, color: "#ffb3b3" }}>{micError}</p>
               )}
             </div>
           </div>
