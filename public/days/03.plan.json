@@ -1,0 +1,96 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Jestem w bardzo dobrym miejscu." },
+    { "mode": "VERIFY", "target": "Szacunek do siebie staje się naturalny." },
+    { "mode": "VERIFY", "target": "W moim wnętrzu dojrzewa spokój i zgoda." },
+    { "mode": "VERIFY", "target": "Czasem wystarczy chwila, by poczuć, że to dobra droga." },
+
+    {
+      "mode": "SAY",
+      "prompt": "A teraz popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — twoje słowa wyświetlą się na ekranie.",
+      "prep_ms": 2500,
+      "dwell_ms": 12000
+    },
+
+    { "mode": "VERIFY", "target": "Doceniam to, jak wiele już zostało zrobione." },
+    { "mode": "VERIFY", "target": "Moje tempo jest wystarczające." },
+    { "mode": "VERIFY", "target": "Uznaję swoją historię taką, jaka jest." },
+    { "mode": "VERIFY", "target": "Podziwiam sposób przetrwania trudnych chwil." },
+    { "mode": "VERIFY", "target": "Jest we mnie siła, która potrafi wracać." },
+
+    {
+      "mode": "SAY",
+      "prompt": "A teraz popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — twoje słowa wyświetlą się na ekranie.",
+      "prep_ms": 2500,
+      "dwell_ms": 12000
+    },
+
+    { "mode": "VERIFY", "target": "Szanuję wysiłek, który doprowadził mnie tutaj." },
+    { "mode": "VERIFY", "target": "Dobre słowo o sobie zaczyna brzmieć naturalnie." },
+    { "mode": "VERIFY", "target": "Każdy dzień przynosi nowe zrozumienie." },
+    { "mode": "VERIFY", "target": "Mam świadomość, że nie wszystko musi być naprawione." },
+    { "mode": "VERIFY", "target": "Spokój staje się częścią mojej codzienności." },
+
+    {
+      "mode": "SAY",
+      "prompt": "A teraz popatrz na siebie i pogratuluj sobie. Zrób to z radością — twoje słowa wyświetlą się na ekranie.",
+      "prep_ms": 2500,
+      "dwell_ms": 12000
+    },
+
+    { "mode": "VERIFY", "target": "Podziwiam cierpliwość, która pozwala mi dojrzewać." },
+    { "mode": "VERIFY", "target": "Zaczynam rozumieć, że wartość nie zależy od tempa." },
+    { "mode": "VERIFY", "target": "W moim spojrzeniu pojawia się pewność." },
+    { "mode": "VERIFY", "target": "Doceniam odwagę, z jaką uczę się siebie." },
+    { "mode": "VERIFY", "target": "Nie wszystko wymaga pośpiechu." },
+    { "mode": "VERIFY", "target": "Podziwiam w sobie wytrwałość i odwagę." },
+    { "mode": "VERIFY", "target": "Szanuję chwile, które przynoszą ciszę." },
+    { "mode": "VERIFY", "target": "To, co wartościowe, trzymam dla siebie." },
+
+    {
+      "mode": "SAY",
+      "prompt": "A teraz popatrz na siebie i powiedz coś, z czego naprawdę jesteś dumny. Zrób to z czułością — twoje słowa wyświetlą się na ekranie.",
+      "prep_ms": 2500,
+      "dwell_ms": 12000
+    },
+
+    { "mode": "VERIFY", "target": "Widzę, że moja odwaga to norma." },
+    { "mode": "VERIFY", "target": "Mam w sobie szacunek do przeszłości." },
+    { "mode": "VERIFY", "target": "Mam za co być sobie wdzięczny." },
+    { "mode": "VERIFY", "target": "Doceniam swoje myśli, coraz życzliwsze." },
+    { "mode": "VERIFY", "target": "Zaufanie do siebie rośnie z każdym dniem." },
+    { "mode": "VERIFY", "target": "Wiem, że częściej dostrzegam swoją wartość." },
+    { "mode": "VERIFY", "target": "Podziwiam siebie za konsekwencję." },
+    { "mode": "VERIFY", "target": "Każde doświadczenie czegoś mnie nauczyło." },
+    { "mode": "VERIFY", "target": "W moim tempie dojrzewa zgoda." },
+    { "mode": "VERIFY", "target": "Szanuję proces, w którym się znajduję." },
+    { "mode": "VERIFY", "target": "Nie muszę zawsze wiedzieć, dokąd iść." },
+    { "mode": "VERIFY", "target": "Podziwiam swój spokój, który widzą inni." },
+    { "mode": "VERIFY", "target": "Pozostaję w zgodzie z tym, w co wierzę." },
+    { "mode": "VERIFY", "target": "Wdzięczność staje się moją rutyną." },
+    { "mode": "VERIFY", "target": "Doceniam momenty, w których naprawdę siebie słyszę." },
+    { "mode": "VERIFY", "target": "Cisza potrafi być pełna znaczenia." },
+    { "mode": "VERIFY", "target": "Widzę w sobie wartość, która nie wymaga potwierdzeń." },
+    { "mode": "VERIFY", "target": "Szanuję rytm, który jest tylko mój." },
+    { "mode": "VERIFY", "target": "Wiem, że na wszystko potrzeba czasu." },
+    { "mode": "VERIFY", "target": "Mam świadomość, że mogę być źródłem dobra." },
+    { "mode": "VERIFY", "target": "To, co czuję, jest wystarczająco prawdziwe." },
+    { "mode": "VERIFY", "target": "Podziwiam w sobie spokój, który wraca." },
+    { "mode": "VERIFY", "target": "Każdy dzień przynosi coś, co mogę nazwać swoim." },
+    { "mode": "VERIFY", "target": "Szanuję granice, które dają mi oddech." },
+    { "mode": "VERIFY", "target": "W chwilach wdzięczności czuję bliskość ze sobą." },
+    { "mode": "VERIFY", "target": "Doceniam, że potrafię dbać o siebie mądrzej." },
+    { "mode": "VERIFY", "target": "Uznaję, że rozwój to także odpoczynek." },
+    { "mode": "VERIFY", "target": "Czasem właśnie zatrzymanie staje się postępem." },
+    { "mode": "VERIFY", "target": "Podziwiam siebie za obecność w tym procesie." },
+    { "mode": "VERIFY", "target": "To, że trwam, jest już dowodem siły." },
+    { "mode": "VERIFY", "target": "Szanuję odwagę, która nie potrzebuje aplauzu." },
+    { "mode": "VERIFY", "target": "Codzienność uczy mnie życzliwości." },
+    { "mode": "VERIFY", "target": "Mam świadomość, że jestem częścią czegoś dobrego." },
+    { "mode": "VERIFY", "target": "W ciszy odnajduję równowagę." },
+    { "mode": "VERIFY", "target": "Podziwiam siłę, która nie musi być głośna." },
+    { "mode": "VERIFY", "target": "Moje wnętrze staje się spokojnym miejscem." },
+    { "mode": "VERIFY", "target": "Szanuję ciszę, która przynosi spokój." },
+    { "mode": "VERIFY", "target": "Każdy dzień przybliża mnie do siebie." }
+  ]
+}
