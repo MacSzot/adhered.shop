@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
+type HintKey = 1 | 2 | 3;
+
 export default function PrompterPage() {
   /* ================== USTAWIENIA ================== */
   const USER_NAME = "demo";
@@ -17,7 +19,7 @@ export default function PrompterPage() {
   const [sayTranscript, setSayTranscript] = useState("");
 
   // przypominajki: 0=off, 1/2/3 = konkretna treść
-  const [hintStage, setHintStage] = useState<0 | 1 | 2 | 3>(0);
+  const [hintStage, setHintStage] = useState<0 | HintKey>(0);
 
   // mic test + vu
   const [micErr, setMicErr] = useState<string | null>(null);
@@ -43,11 +45,11 @@ export default function PrompterPage() {
     return () => timers.forEach(clearTimeout);
   }, [isRunning]);
 
-  const HINTS = {
+  const HINTS: Record<HintKey, string> = {
     1: "Jeśli możesz, postaraj się przeczytać na głos.",
     2: "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.",
     3: "Jeśli chcesz kontynuować, dotknij ekranu.",
-  } as const;
+  };
 
   // po 3. przypominajce czekamy na pojedyncze dotknięcie i wygaszamy przypominajki
   useEffect(() => {
@@ -155,7 +157,6 @@ export default function PrompterPage() {
 
   /* ================== START / STOP SESJI ================== */
   const handleStart = () => {
-    // zegar od nowa
     setRemaining(MAX_TIME);
     setIsRunning(true);
   };
@@ -163,7 +164,7 @@ export default function PrompterPage() {
     setIsRunning(false);
   };
 
-  /* ================== STYLES (inline – kluczowe elementy) ================== */
+  /* ================== STYLES ================== */
   const topInfoStyle: React.CSSProperties = {
     display: "flex",
     flexDirection: "row",
@@ -332,11 +333,13 @@ export default function PrompterPage() {
             </div>
 
             {/* Przypominajki ~70% wysokości */}
-            {hintStage > 0 && <div style={hintStyle}>{HINTS[hintStage]}</div>}
+            {hintStage > 0 && (
+              <div style={hintStyle}>{HINTS[hintStage as HintKey]}</div>
+            )}
           </>
         )}
 
-        {/* VU-meter (działa w teście i w sesji, gdy micActive=true) */}
+        {/* VU-meter */}
         <div
           aria-hidden
           style={{
@@ -367,3 +370,4 @@ export default function PrompterPage() {
     </main>
   );
 }
+
