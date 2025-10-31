@@ -1,9 +1,9 @@
 {
   "steps": [
-    { "mode": "VERIFY", "target": "Jestem w bardzo dobrym miejscu." },
-    { "mode": "VERIFY", "target": "Szacunek do siebie staje się naturalny." },
-    { "mode": "VERIFY", "target": "W moim wnętrzu dojrzewa spokój i zgoda." },
-    { "mode": "VERIFY", "target": "Czasem wystarczy chwila, by poczuć, że to dobra droga." },
+    { "mode": "VERIFY", "target": "Dziękuję sobie za swoją odwagę" },
+    { "mode": "VERIFY", "target": "Szacunek do siebie jest rzeczą naturajną." },
+    { "mode": "VERIFY", "target": "Wiem, jak ogromną wnoszę wartość w życia ludzi." },
+    { "mode": "VERIFY", "target": "Dziekuje sobie za swoją odwagę." },
 
     {
       "mode": "SAY",
@@ -12,9 +12,9 @@
       "dwell_ms": 12000
     },
 
-    { "mode": "VERIFY", "target": "Doceniam to, jak wiele już zostało zrobione." },
-    { "mode": "VERIFY", "target": "Moje tempo jest wystarczające." },
-    { "mode": "VERIFY", "target": "Uznaję swoją historię taką, jaka jest." },
+    { "mode": "VERIFY", "target": "Doceniam to, jak wiele udało mi się przeżyć." },
+    { "mode": "VERIFY", "target": "Wiem, że zawsze jestem w stanie sobie poradzić." },
+    { "mode": "VERIFY", "target": "Poczucie szacunku do siebie napawa mnie dumą." },
 
     {
       "mode": "SAY",
@@ -25,7 +25,7 @@
 
     { "mode": "VERIFY", "target": "Każdy dzień przynosi nowe zrozumienie." },
     { "mode": "VERIFY", "target": "Mam świadomość, że nie wszystko musi być naprawione." },
-    { "mode": "VERIFY", "target": "Spokój staje się częścią mojej codzienności." },
+    { "mode": "VERIFY", "target": "Szanuje wszystkie swoje złe decyzje." },
 
     {
       "mode": "SAY",
@@ -38,10 +38,6 @@
     { "mode": "VERIFY", "target": "Zaczynam rozumieć, że wartość nie zależy od tempa." },
     { "mode": "VERIFY", "target": "W moim spojrzeniu pojawia się pewność." },
     { "mode": "VERIFY", "target": "Doceniam odwagę, z jaką uczę się siebie." },
-    { "mode": "VERIFY", "target": "Nie wszystko wymaga pośpiechu." },
-    { "mode": "VERIFY", "target": "Podziwiam w sobie wytrwałość i odwagę." },
-    { "mode": "VERIFY", "target": "Szanuję chwile, które przynoszą ciszę." },
-    { "mode": "VERIFY", "target": "To, co wartościowe, trzymam dla siebie." },
 
     {
       "mode": "SAY",
