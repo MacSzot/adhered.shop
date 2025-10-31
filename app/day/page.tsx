@@ -2,139 +2,172 @@
 
 import { useEffect, useRef, useState } from "react";
 
-/* ================== TYPY ================== */
+/** ===== Typ kroku dnia ===== */
 type PlanStep = {
   mode: "VERIFY" | "SAY";
-  target?: string;  // VERIFY — tekst do powtórzenia
-  prompt?: string;  // SAY — komenda/otwarte pytanie
-  prep_ms?: number; // opóźnienie przed startem recognition
-  dwell_ms?: number;// ile trwa okno SAY (mówienie + transkrypt)
+  target?: string;     // dla VERIFY
+  prompt?: string;     // dla SAY
+  min_sentences?: number;
+  starts_with?: string[];
+  starts_with_any?: string[];
+  prep_ms?: number;    // opóźnienie przed startem nasłuchu SAY
+  dwell_ms?: number;   // ile trwa okno SAY
+  note?: string;
 };
 
-/* ================== STAŁE ================== */
-const USER_NAME = "demo";
-const MAX_TIME_SEC = 6 * 60;         // 6 minut „cut-off” sesji
-const SILENCE_HINT_MS = 7000;        // po tylu ms ciszy pokaż hint
-const HARD_CAP_MS = 12000;           // maks. czas jednego kroku
-const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: po wykryciu głosu ile czekamy do NEXT
-
-// 1→2→3 i KONIEC (potem już nie przypominamy)
-const HINTS: string[] = [
-  "",
-  "Jeśli możesz, postaraj się przeczytać na głos.",
-  "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.",
-  "Jeśli chcesz kontynuować, dotknij ekranu.",
-];
-
-/* ================== PLAN DNIA ================== */
-async function loadDayPlanOrTxt(dayFileParam: string): Promise<PlanStep[]> {
-  try {
-    const r = await fetch(`/days/${dayFileParam}.plan.json`, { cache: "no-store" });
-    if (r.ok) {
-      const j = await r.json();
-      const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
-      if (steps.length) return steps;
-    }
-  } catch {}
-  try {
-    const r2 = await fetch(`/days/${dayFileParam}.txt`, { cache: "no-store" });
-    if (r2.ok) {
-      const txt = await r2.text();
-      return txt
-        .split(/\r?\n/)
-        .map(s => s.trim())
-        .filter(Boolean)
-        .map(line => ({ mode: "VERIFY" as const, target: line }));
-    }
-  } catch {}
-
-  // ——— Fallback (Dzień 3 z trzema otwartymi) ———
-  const fallback: PlanStep[] = [
-    { mode: "VERIFY", target: "Jestem w bardzo dobrym miejscu." },
-    { mode: "VERIFY", target: "Szacunek do siebie staje się naturalny." },
-    { mode: "VERIFY", target: "W moim wnętrzu dojrzewa spokój i zgoda." },
-
-    { mode: "SAY", prompt: "Popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — Twoje słowa wyświetlą się na ekranie.", prep_ms: 800, dwell_ms: 12000 },
-
-    { mode: "VERIFY", target: "Doceniam to, jak wiele już zostało zrobione." },
-    { mode: "VERIFY", target: "Moje tempo jest wystarczające." },
-
-    { mode: "SAY", prompt: "Popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — Twoje słowa wyświetlą się na ekranie.", prep_ms: 800, dwell_ms: 12000 },
-
-    { mode: "VERIFY", target: "Uznaję swoją historię taką, jaka jest." },
-    { mode: "VERIFY", target: "Podziwiam sposób przetrwania trudnych chwil." },
-
-    { mode: "SAY", prompt: "Popatrz na siebie i pogratuluj sobie. Zrób to z radością — Twoje słowa wyświetlą się na ekranie.", prep_ms: 800, dwell_ms: 12000 },
-
-    { mode: "VERIFY", target: "Szanuję wysiłek, który doprowadził mnie tutaj." },
-    { mode: "VERIFY", target: "Dobre słowo o sobie zaczyna brzmieć naturalnie." },
-  ];
-  return fallback;
-}
-
-/* ================== POMOCNICZE ================== */
+/** ===== Pomocnicze ===== */
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
 
-/* ================== KOMPONENT ================== */
-export default function PrompterPage() {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
+  try {
+    const r = await fetch(`/days/${dayFileParam}.plan.json`, { cache: "no-store" });
+    if (r.ok) {
+      const j = await r.json();
+      const steps = Array.isArray(j?.steps) ? (j.steps as PlanStep[]) : [];
+      if (steps.length) return { source: "json", steps };
+    }
+  } catch {}
+  const r2 = await fetch(`/days/${dayFileParam}.txt`, { cache: "no-store" });
+  if (!r2.ok) throw new Error(`Brak pliku dnia: ${dayFileParam}.plan.json i ${dayFileParam}.txt`);
+  const txt = await r2.text();
+  const steps: PlanStep[] = txt
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(line => ({ mode: "VERIFY" as const, target: line }));
+  return { source: "txt", steps };
+}
 
-  const dayRaw = typeof window !== "undefined" ? getParam("day", "03") : "03";
+/** ===== Strona ===== */
+export default function PrompterPage() {
+  // Ustawienia / parametry dnia
+  const USER_NAME = "demo";
+  const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
   const dayFileParam = dayRaw.padStart(2, "0");
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
     return Number.isNaN(n) ? dayRaw : String(n);
   })();
 
+  // Limity / czasy
+  const MAX_TIME = 6 * 60;            // cała sesja ~6 min
+  const SPEAKING_FRAMES_REQUIRED = 2; // ile ramek „głosu” z rzędu
+  const SILENCE_HINT_MS = 7000;       // po 7 s ciszy pokaż hint
+  const HARD_CAP_MS = 12000;          // po 12 s wymuś „dalej” (w kroku)
+  const ADVANCE_AFTER_SPEAK_MS = 4000;// VERIFY: 4 s po głosie → „dalej”
+
+  // Stan programu
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
+  const [remaining, setRemaining] = useState(MAX_TIME);
 
-  /* ----- ZEGAR SESJI ----- */
-  const [remaining, setRemaining] = useState(MAX_TIME_SEC);
-  const endAtRef = useRef<number | null>(null);
-  const countdownIdRef = useRef<number | null>(null);
-
-  function startCountdown(seconds: number) {
-    stopCountdown();
-    endAtRef.current = Date.now() + seconds * 1000;
-    setRemaining(Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000)));
-    countdownIdRef.current = window.setInterval(() => {
-      if (!endAtRef.current) return;
-      const secs = Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000));
-      setRemaining(secs);
-      if (secs <= 0) stopSession();
-    }, 250);
-  }
-  function stopCountdown() {
-    if (countdownIdRef.current) {
-      window.clearInterval(countdownIdRef.current);
-      countdownIdRef.current = null;
-    }
-    endAtRef.current = null;
-  }
-
-  /* ----- AUDIO/VIDEO + VAD ----- */
+  // Kamera / audio / VAD
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-
   const [levelPct, setLevelPct] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
+  const speakingFramesRef = useRef(0);
+  const heardThisStepRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
 
+  // Transkrypcja „SAY”
+  const [sayTranscript, setSayTranscript] = useState<string>("");
+  const sayActiveRef = useRef(false);
+  const recognitionRef = useRef<any>(null);
+
+  // Timer sesji
+  const endAtRef = useRef<number | null>(null);
+  const countdownIdRef = useRef<number | null>(null);
+
+  // Timery kroków
+  const stepTimerRef = useRef<number | null>(null);
+  const advanceTimerRef = useRef<number | null>(null);
+  const silenceHintTimerRef = useRef<number | null>(null);
+  const hardCapTimerRef = useRef<number | null>(null);
+
+  // Lusterko
+  const [mirror] = useState(true);
+
+  // Przypominajki: 1 → 2 → 3 (po 3 wymagamy dotyku; potem już nigdy nie pokazujemy)
+  const [hintStage, setHintStage] = useState<0 | 1 | 2 | 3>(0);
+  const hintsDisabledRef = useRef(false);
+  const [tapToContinueVisible, setTapToContinueVisible] = useState(false);
+
+  // Refy aktualnych wartości
+  const isRunningRef = useRef(isRunning);
+  const idxRef = useRef(idx);
+  const stepsRef = useRef<PlanStep[]>([]);
+  useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
+  useEffect(() => { idxRef.current = idx; }, [idx]);
+  useEffect(() => { stepsRef.current = steps; }, [steps]);
+
+  /** Wczytaj plan dnia */
+  useEffect(() => {
+    (async () => {
+      try {
+        const { source, steps } = await loadDayPlanOrTxt(dayFileParam);
+        setSteps(steps);
+        setIdx(0);
+        setDisplayText(steps[0]?.mode === "VERIFY" ? (steps[0]?.target || "") : (steps[0]?.prompt || ""));
+        // eslint-disable-next-line no-console
+        console.log(`[DAY ${dayFileParam}] source:`, source, `steps: ${steps.length}`);
+      } catch (e) {
+        console.error(e);
+        const fallback = [{ mode: "VERIFY" as const, target: "Brak treści dla tego dnia." }];
+        setSteps(fallback);
+        setDisplayText(fallback[0].target!);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Start / stop sesji */
+  const startSession = async () => {
+    if (!stepsRef.current.length) return;
+    const ok = await startAV();
+    if (!ok) { setIsRunning(false); return; }
+    setIsRunning(true);
+    startCountdown(MAX_TIME);
+    hintsDisabledRef.current = false;
+    setHintStage(0);
+    setTapToContinueVisible(false);
+    setIdx(0);
+    setDisplayText(
+      stepsRef.current[0]?.mode === "VERIFY"
+        ? (stepsRef.current[0]?.target || "")
+        : (stepsRef.current[0]?.prompt || "")
+    );
+    runStep(0);
+  };
+
+  const stopSession = () => {
+    setIsRunning(false);
+    stopCountdown();
+    clearStepTimers();
+    stopSayCapture();
+    stopAV();
+    setLevelPct(0);
+    setHintStage(0);
+    setTapToContinueVisible(false);
+  };
+
+  /** Kamera + VAD */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
+    speakingFramesRef.current = 0;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        video: true,
         audio: {
           echoCancellation: false,
           noiseSuppression: false,
@@ -148,6 +181,13 @@ export default function PrompterPage() {
       const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
       const ac = new Ctx();
       audioCtxRef.current = ac;
+
+      if (ac.state === "suspended") {
+        await ac.resume().catch(() => {});
+        const resumeOnTap = () => ac.resume().catch(() => {});
+        document.addEventListener("touchstart", resumeOnTap, { once: true });
+        document.addEventListener("click", resumeOnTap, { once: true });
+      }
 
       const analyser = ac.createAnalyser();
       analyser.fftSize = 1024;
@@ -171,9 +211,29 @@ export default function PrompterPage() {
         const vu = Math.min(100, peak * 480);
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // prosty VAD → zapamiętujemy czy ktoś mówił (do timingu VERIFY / hintów)
         const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
-        onVadFrame(speakingNow);
+        if (speakingNow) {
+          speakingFramesRef.current += 1;
+
+          // jeśli ktoś mówi – nie pokazujemy przypominajek
+          if (!hintsDisabledRef.current) setHintStage(0);
+
+          if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
+            const s = stepsRef.current[idxRef.current];
+            // VERIFY: po pierwszym głosie odlicz 4 s i przejdź dalej
+            if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
+              heardThisStepRef.current = true;
+              clearOnly(["silence", "hard"]);
+              const thisIdx = idxRef.current;
+              if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
+              advanceTimerRef.current = window.setTimeout(() => {
+                if (idxRef.current === thisIdx) gotoNext(thisIdx);
+              }, ADVANCE_AFTER_SPEAK_MS);
+            }
+          }
+        } else {
+          speakingFramesRef.current = 0;
+        }
 
         rafRef.current = requestAnimationFrame(loop);
       };
@@ -181,7 +241,9 @@ export default function PrompterPage() {
       return true;
     } catch (err: any) {
       console.error("getUserMedia error:", err);
-      setMicError(err?.name === "NotAllowedError" ? "Brak zgody na mikrofon/kamerę." : "Nie udało się uruchomić mikrofonu/kamery.");
+      setMicError(err?.name === "NotAllowedError"
+        ? "Brak zgody na mikrofon/kamerę."
+        : "Nie udało się uruchomić mikrofonu/kamery.");
       return false;
     }
   }
@@ -197,11 +259,7 @@ export default function PrompterPage() {
     }
   }
 
-  /* ----- SAY: Web Speech API (transkrypt na GÓRZE) ----- */
-  const recognitionRef = useRef<any>(null);
-  const [sayTranscript, setSayTranscript] = useState("");
-  const sayActiveRef = useRef(false);
-
+  /** Web Speech API – SAY */
   function startSayCapture() {
     sayActiveRef.current = true;
     setSayTranscript("");
@@ -212,14 +270,15 @@ export default function PrompterPage() {
       console.warn("Web Speech API niedostępne.");
       return;
     }
-
     const rec = new SR();
     recognitionRef.current = rec;
+
     rec.lang = "pl-PL";
     rec.continuous = true;
     rec.interimResults = true;
 
     let buffer = "";
+
     rec.onresult = (e: any) => {
       let interim = "";
       let finalText = "";
@@ -231,18 +290,21 @@ export default function PrompterPage() {
       const composed = (buffer + finalText + interim).trim();
       setSayTranscript(composed);
       if (finalText) buffer += finalText + " ";
-
-      // mówimy → wyłącz pierwszy hint (jeśli był)
-      if (hintStageRef.current === 1) setHintStage(0);
     };
-    rec.onerror = (err: any) => console.warn("SpeechRecognition error:", err?.error || err);
+
+    rec.onerror = (err: any) => {
+      console.warn("SpeechRecognition error:", err?.error || err);
+    };
+
     rec.onend = () => {
       if (sayActiveRef.current) {
         try { rec.start(); } catch {}
       }
     };
+
     try { rec.start(); } catch (e) { console.warn("SpeechRecognition start error:", e); }
   }
+
   function stopSayCapture() {
     sayActiveRef.current = false;
     const rec = recognitionRef.current;
@@ -252,241 +314,231 @@ export default function PrompterPage() {
     recognitionRef.current = null;
   }
 
-  /* ----- REFERENCJE BIEŻĄCYCH WARTOŚCI ----- */
-  const isRunningRef = useRef(isRunning);
-  const idxRef = useRef(idx);
-  const stepsRef = useRef<PlanStep[]>([]);
-  const heardThisStepRef = useRef(false);        // czy w VERIFY padł głos (do 4s auto-next)
-  const silenceTimerRef = useRef<number | null>(null);
-  const hardCapTimerRef = useRef<number | null>(null);
-  const advanceTimerRef = useRef<number | null>(null);
-
-  useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
-  useEffect(() => { idxRef.current = idx; }, [idx]);
-  useEffect(() => { stepsRef.current = steps; }, [steps]);
-
-  /* ----- HINTY: 1→2→3, a po 3 tap → wyłączamy już NA ZAWSZE ----- */
-  const [hintStage, _setHintStage] = useState<0 | 1 | 2 | 3>(0);
-  const hintStageRef = useRef<0 | 1 | 2 | 3>(0);
-  function setHintStage(v: 0 | 1 | 2 | 3) { hintStageRef.current = v; _setHintStage(v); }
-  const [hintsDisabledForever, setHintsDisabledForever] = useState(false);
-
-  function scheduleSilenceHint(i: number) {
-    if (hintsDisabledForever) return;
-    clearSilenceHint();
-    silenceTimerRef.current = window.setTimeout(() => {
-      if (idxRef.current !== i || hintsDisabledForever) return;
-      setHintStage(hintStageRef.current < 3 ? ((hintStageRef.current + 1) as 1 | 2 | 3) : 3);
-    }, SILENCE_HINT_MS);
-  }
-  function clearSilenceHint() {
-    if (silenceTimerRef.current) {
-      window.clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  }
-  function onUserTapAfterHint() {
-    if (hintStageRef.current === 3) {
-      setHintsDisabledForever(true);
-      setHintStage(0);
-    }
-  }
-
-  /* ----- VAD → zdarzenie ramki ----- */
-  const speakingFramesRef = useRef(0);
-  function onVadFrame(speakingNow: boolean) {
-    if (!isRunningRef.current) return;
-
-    if (speakingNow) {
-      speakingFramesRef.current += 1;
-      if (hintStageRef.current > 0) setHintStage(0);
-
-      const s = stepsRef.current[idxRef.current];
-      if (s?.mode === "VERIFY" && !heardThisStepRef.current && speakingFramesRef.current >= 2) {
-        heardThisStepRef.current = true;
-        clearTimeouts(["advance", "silence"]);
-        const thisIdx = idxRef.current;
-        advanceTimerRef.current = window.setTimeout(() => {
-          if (idxRef.current === thisIdx) gotoNext(thisIdx);
-        }, ADVANCE_AFTER_SPEAK_MS);
+  /** Licznik sesji */
+  function startCountdown(seconds: number) {
+    stopCountdown();
+    endAtRef.current = Date.now() + seconds * 1000;
+    setRemaining(Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000)));
+    countdownIdRef.current = window.setInterval(() => {
+      if (!endAtRef.current) return;
+      const secs = Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000));
+      setRemaining(secs);
+      if (secs <= 0) {
+        // Hard finish
+        stopSayCapture();
+        setTapToContinueVisible(false);
+        setHintStage(0);
+        setIsRunning(false);
+        stopAV();
       }
-    } else {
-      speakingFramesRef.current = 0;
+    }, 250);
+  }
+
+  function stopCountdown() {
+    if (countdownIdRef.current) {
+      window.clearInterval(countdownIdRef.current);
+      countdownIdRef.current = null;
+    }
+    endAtRef.current = null;
+  }
+
+  /** Timery kroków */
+  function clearOnly(which: Array<"step"|"advance"|"silence"|"hard">) {
+    for (const w of which) {
+      if (w === "step" && stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
+      if (w === "advance" && advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
+      if (w === "silence" && silenceHintTimerRef.current) { window.clearTimeout(silenceHintTimerRef.current); silenceHintTimerRef.current = null; }
+      if (w === "hard" && hardCapTimerRef.current) { window.clearTimeout(hardCapTimerRef.current); hardCapTimerRef.current = null; }
     }
   }
+  function clearStepTimers() { clearOnly(["step","advance","silence","hard"]); }
 
-  function clearTimeouts(which: Array<"advance" | "silence" | "hard"> = ["advance", "silence", "hard"]) {
-    if (which.includes("advance") && advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
-    if (which.includes("silence")) clearSilenceHint();
-    if (which.includes("hard") && hardCapTimerRef.current) { window.clearTimeout(hardCapTimerRef.current); hardCapTimerRef.current = null; }
+  function scheduleSilenceAndHard(i: number) {
+    // Przypominajki (tylko jeśli nie wyłączone po 3 etapie)
+    if (!hintsDisabledRef.current) {
+      clearOnly(["silence"]);
+      silenceHintTimerRef.current = window.setTimeout(() => {
+        if (idxRef.current !== i) return;
+        setHintStage(prev => {
+          if (prev >= 3) return 3;
+          const next = (prev + 1) as 1 | 2 | 3;
+          if (next === 3) {
+            // trzeci hint → pokaż „dotknij ekranu”
+            setTapToContinueVisible(true);
+          }
+          return next;
+        });
+      }, SILENCE_HINT_MS);
+    }
+
+    // Wymuś przejście kroku po HARD_CAP_MS, ale
+    // jeśli aktywny jest etap 3 i czekamy na dotyk — NIE wymuszaj automatu
+    clearOnly(["hard"]);
+    hardCapTimerRef.current = window.setTimeout(() => {
+      if (idxRef.current !== i) return;
+      if (tapToContinueVisible) return; // czekamy na dotyk przy 3 etapie
+      stopSayCapture();
+      gotoNext(i);
+    }, HARD_CAP_MS);
   }
 
-  /* ----- KROKI ----- */
+  /** Uruchom krok i */
   function runStep(i: number) {
     if (!stepsRef.current.length) return;
     const s = stepsRef.current[i];
     if (!s) return;
 
-    clearTimeouts();
+    clearStepTimers();
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
     setHintStage(0);
+    setTapToContinueVisible(false);
 
     if (s.mode === "VERIFY") {
       stopSayCapture();
       setSayTranscript("");
       setDisplayText(s.target || "");
-      scheduleSilenceHint(i);
-
-      hardCapTimerRef.current = window.setTimeout(() => {
-        if (idxRef.current === i) gotoNext(i);
-      }, HARD_CAP_MS);
+      scheduleSilenceAndHard(i);
     } else {
+      const prep = Number(s.prep_ms ?? 1200);
+      const dwell = Number(s.dwell_ms ?? 12000);
+
       stopSayCapture();
       setDisplayText(s.prompt || "");
       setSayTranscript("");
-      scheduleSilenceHint(i);
 
-      const prep = Number(s.prep_ms ?? 1000);
-      const dwell = Number(s.dwell_ms ?? 12000);
+      // od razu odpalamy liczniki przypominajek / hard-cap
+      scheduleSilenceAndHard(i);
 
-      const thisIdx = i;
-      window.setTimeout(() => {
-        if (idxRef.current !== thisIdx) return;
+      // po prep start rozpoznawania
+      stepTimerRef.current = window.setTimeout(() => {
+        if (idxRef.current !== i) return;
         startSayCapture();
-        hardCapTimerRef.current = window.setTimeout(() => {
-          if (idxRef.current !== thisIdx) return;
+        // po dwell kończymy SAY
+        stepTimerRef.current = window.setTimeout(() => {
+          if (idxRef.current !== i) return;
           stopSayCapture();
-          setHintStage(0);
-          gotoNext(thisIdx);
+          gotoNext(i);
         }, dwell);
       }, prep);
     }
   }
 
   function gotoNext(i: number) {
-    clearTimeouts();
+    clearStepTimers();
+    setTapToContinueVisible(false);
+    setHintStage(0);
     stopSayCapture();
+
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
-    const n = stepsRef.current[next];
-    setDisplayText(n?.mode === "VERIFY" ? (n?.target || "") : (n?.prompt || ""));
+    const s = stepsRef.current[next];
+    setDisplayText(s?.mode === "VERIFY" ? (s?.target || "") : (s?.prompt || ""));
     runStep(next);
   }
 
-  /* ----- START/STOP SESJI ----- */
-  const startSession = async () => {
-    if (!stepsRef.current.length) return;
-    const ok = await startAV();
-    if (!ok) { setIsRunning(false); return; }
-    setIsRunning(true);
-    setHintsDisabledForever(false);
+  /** Obsługa dotyku przy 3. przypominajce */
+  function handleTapToContinue() {
+    if (!tapToContinueVisible) return;
+    setTapToContinueVisible(false);
     setHintStage(0);
-    startCountdown(MAX_TIME_SEC);
-    setIdx(0);
-    const first = stepsRef.current[0];
-    setDisplayText(first?.mode === "VERIFY" ? (first?.target || "") : (first?.prompt || ""));
-    runStep(0);
-  };
+    // od teraz nie pokazujemy już przypominajek
+    hintsDisabledRef.current = true;
+  }
 
-  const stopSession = () => {
-    setIsRunning(false);
-    stopCountdown();
-    clearTimeouts(["advance", "silence", "hard"]);
-    stopSayCapture();
-    stopAV();
-    setLevelPct(0);
-    setHintStage(0);
-  };
-
-  /* ----- INIT PLAN ----- */
-  useEffect(() => {
-    (async () => {
-      const stepsLoaded = await loadDayPlanOrTxt(dayFileParam);
-      setSteps(stepsLoaded);
-      setIdx(0);
-      setDisplayText(stepsLoaded[0]?.mode === "VERIFY" ? (stepsLoaded[0]?.target || "") : (stepsLoaded[0]?.prompt || ""));
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* ================== RENDER ================== */
+  /** Render */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   const isSay = steps[idx]?.mode === "SAY";
 
   return (
-    <main style={styles.root} onClick={() => onUserTapAfterHint()}>
-      {/* TOP BAR */}
+    <main style={styles.container}>
+      {/* Topbar */}
       <header style={styles.topbar}>
         <nav style={styles.tabs}>
-          <a style={{ ...styles.tab, ...styles.tabActive }} href="/day" aria-current="page">Prompter</a>
-          <span style={{ ...styles.tab, opacity: 0.35 }} aria-disabled="true" title="Wkrótce">Rysownik</span>
+          <a href="/day" aria-current="page" style={{ ...styles.tab, ...styles.tabActive }}>Prompter</a>
+          <span aria-disabled="true" title="Wkrótce" style={{ ...styles.tab, opacity: 0.5 }}>Rysownik</span>
         </nav>
+
         <div style={styles.topInfo}>
-          <span style={styles.meta}><b>Użytkownik:</b> {USER_NAME}</span>
-          <span style={styles.dot}>•</span>
-          <span style={styles.meta}><b>Dzień programu:</b> {DAY_LABEL}</span>
+          <span><b>Użytkownik:</b> {USER_NAME}</span>
+          <span style={{ opacity: 0.65, margin: "0 8px" }}>•</span>
+          <span><b>Dzień programu:</b> {DAY_LABEL}</span>
         </div>
-        <div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {!isRunning ? (
             <button style={styles.btn} onClick={startSession}>Start</button>
           ) : (
-            <button style={styles.btn} onClick={stopSession}>Stop</button>
+            <button style={{ ...styles.btn, background: "rgba(255,80,80,0.25)" }} onClick={stopSession}>Stop</button>
           )}
         </div>
       </header>
 
-      {/* TIMER */}
-      <div style={styles.timer}>{fmt(remaining)}</div>
+      {/* Zegar – zawsze u góry, centralnie */}
+      <div style={styles.timerTop}>{fmt(remaining)}</div>
 
-      {/* SCENA */}
-      <div style={styles.stage}>
-        {/* kamera */}
-        <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+      {/* Scena */}
+      <div style={{ ...styles.stage, ...(mirror ? styles.mirrored : {}) }} onClick={handleTapToContinue} onTouchStart={handleTapToContinue}>
+        <video ref={videoRef} autoPlay playsInline muted style={styles.cam} />
 
-        {/* gradient kosmetyczny (czytelność tekstu) */}
-        <div style={styles.gradientTop} />
-        <div style={styles.gradientBottom} />
-
-        {/* INTRO (gdy nie uruchomiono) */}
+        {/* Intro (przed startem) */}
         {!isRunning && (
-          <div style={styles.overlayCenter}>
-            <div style={styles.introWrap}>
-              <p style={styles.introLine}>
+          <div style={styles.overlay}>
+            <div style={styles.introBox}>
+              <p style={styles.introP}>
+                Twoja sesja potrwa około <b>6 minut</b>.
+              </p>
+              <p style={{ ...styles.introP, marginTop: 10 }}>
                 Prosimy o powtarzanie na głos wyświetlanych treści.
               </p>
-              <p style={{ ...styles.introLine, marginTop: 10 }}>
-                Aktywowano analizator dźwięku MeRoar™
+              <p style={{ ...styles.introP, marginTop: 10 }}>
+                Aktywowano analizator dźwięku <b>MeRoar™</b>.
               </p>
               {micError && (
-                <p style={styles.micError}>{micError} — upewnij się, że przeglądarka ma dostęp do mikrofonu i kamery.</p>
+                <p style={{ marginTop: 14, color: "#ffb3b3", fontSize: 14, textAlign: "center" }}>
+                  {micError}
+                </p>
               )}
             </div>
           </div>
         )}
 
-        {/* SESJA */}
+        {/* Sesja */}
         {isRunning && (
-          <>
-            {/* Tekst główny (VERIFY/SAY) — ZAWSZE CENTRUM */}
-            <div style={styles.centerWrap}>
-              <div style={styles.centerText}>{displayText}</div>
+          <div style={styles.overlay}>
+            {/* Transkrypt u góry (bez tła) */}
+            {isSay && (
+              <div style={styles.transcriptTop}>
+                {sayTranscript}
+              </div>
+            )}
+
+            {/* Tekst główny – ścisły środek ekranu */}
+            <div style={styles.centerText}>
+              {displayText}
             </div>
 
-            {/* SAY — transkrypt NA GÓRZE (bez tła) */}
-            {isSay && (
-              <div style={styles.transcriptTop}>{sayTranscript}</div>
+            {/* Przypominajki – pojawiają się na środku dolnej części, po 7 s ciszy.
+                1: "Jeśli możesz, postaraj się przeczytać na głos"
+                2: "Pamiętaj — to przestrzeń pełna szacunku do Ciebie"
+                3: "Jeśli chcesz kontynuować, dotknij ekranu" */}
+            {hintStage > 0 && !hintsDisabledRef.current && (
+              <div style={styles.hint}>
+                {HINTS[hintStage]}
+              </div>
             )}
 
-            {/* HINT: 1..3 — ~70% wysokości, jeden w danym momencie, po 3 tap → off forever */}
-            {hintStage > 0 && !hintsDisabledForever && (
-              <div style={styles.hint}>{HINTS[hintStage]}</div>
+            {/* „Dotknij ekranu” – aktywne tylko przy etapie 3; po dotyku wyłączamy przypominajki do końca sesji */}
+            {tapToContinueVisible && (
+              <div style={styles.tapOverlay}>
+                <div style={styles.tapOverlayInner}>Dotknij ekranu, aby kontynuować</div>
+              </div>
             )}
-          </>
+          </div>
         )}
 
-        {/* VU-Meter (pionowy, z prawej) */}
-        <div style={styles.vu}>
+        {/* VU-meter po prawej */}
+        <div style={styles.vuWrap}>
           <div style={{ ...styles.vuFill, height: `${levelPct}%` }} />
         </div>
       </div>
@@ -494,199 +546,146 @@ export default function PrompterPage() {
   );
 }
 
-/* ================== STYLE (inline, bez klas CSS) ================== */
+/** ===== Stałe tekstów ===== */
+const HINTS: Record<1 | 2 | 3, string> = {
+  1: "Jeśli możesz, postaraj się przeczytać na głos.",
+  2: "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.",
+  3: "Jeśli chcesz kontynuować, dotknij ekranu.",
+};
+
+/** ===== Style (prosto i bezpiecznie) ===== */
 const styles: Record<string, React.CSSProperties> = {
-  root: {
-    position: "fixed",
-    inset: 0,
-    background: "#000",
-    color: "#fff",
-    fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-    userSelect: "none",
-    WebkitUserSelect: "none",
-  },
+  container: { position: "fixed", inset: 0, background: "black", color: "white", fontFamily: "system-ui, Inter, Arial, sans-serif" },
 
   topbar: {
     position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 64,
-    display: "grid",
-    gridTemplateColumns: "1fr auto auto",
-    gap: 16,
+    top: 0, left: 0, right: 0,
+    height: 54,
+    display: "flex",
     alignItems: "center",
-    padding: "10px 14px",
-    background: "rgba(0,0,0,0.45)",
-    WebkitBackdropFilter: "saturate(180%) blur(8px)" as any,
-    backdropFilter: "saturate(180%) blur(8px)",
+    justifyContent: "space-between",
+    padding: "0 12px",
+    background: "linear-gradient(to bottom, rgba(0,0,0,0.7), rgba(0,0,0,0))",
     zIndex: 50,
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
   },
 
-  tabs: { display: "flex", gap: 10 },
-  tab: {
-    display: "inline-flex",
-    alignItems: "center",
-    height: 34,
-    padding: "0 16px",
-    borderRadius: 999,
-    background: "rgba(255,255,255,0.08)",
-    color: "#fff",
-    textDecoration: "none",
-    fontSize: 14,
-  },
-  tabActive: { background: "rgba(255,255,255,0.18)", fontWeight: 600 },
+  tabs: { display: "flex", alignItems: "center", gap: 10 },
+  tab: { fontSize: 14, textDecoration: "none", color: "white", padding: "6px 10px", borderRadius: 8, opacity: 0.9 } as React.CSSProperties,
+  tabActive: { background: "rgba(255,255,255,0.12)" },
 
-  topInfo: { display: "flex", alignItems: "center", gap: 8, color: "rgba(255,255,255,0.9)", fontSize: 15, fontWeight: 600 },
-  meta: {},
-  dot: { opacity: 0.6 },
+  topInfo: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, opacity: 0.95 },
 
   btn: {
-    height: 34,
-    padding: "0 18px",
-    borderRadius: 12,
-    background: "linear-gradient(90deg, rgba(255,255,255,0.18), rgba(255,255,255,0.28))",
-    color: "#fff",
-    border: "1px solid rgba(255,255,255,0.22)",
-    fontWeight: 700,
+    padding: "8px 14px",
+    borderRadius: 10,
+    background: "rgba(255,255,255,0.15)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.25)",
     cursor: "pointer",
-    boxShadow: "0 6px 18px rgba(0,0,0,0.28)",
+    fontSize: 14,
   },
 
-  timer: {
+  timerTop: {
     position: "fixed",
-    top: 72,
-    left: 0,
-    right: 0,
+    top: 58, left: 0, right: 0,
     textAlign: "center",
-    fontSize: "clamp(28px, 4.2vw, 44px)",
-    fontWeight: 900,
+    fontWeight: 600,
+    fontSize: 18,
     letterSpacing: 0.5,
-    textShadow: "0 2px 8px rgba(0,0,0,0.55)",
     zIndex: 40,
-  },
-
-  stage: {
-    position: "absolute",
-    top: 0, left: 0, right: 0, bottom: 0,
-    overflow: "hidden",
-  },
-
-  video: {
-    position: "absolute",
-    inset: 0,
-    width: "100%",
-    height: "100svh",
-    objectFit: "cover",
-    transform: "scaleX(-1)", // lustro
-    background: "#000",
-  },
-
-  gradientTop: {
-    position: "absolute",
-    top: 0, left: 0, right: 0, height: 160,
-    background: "linear-gradient(180deg, rgba(0,0,0,0.72), rgba(0,0,0,0))",
+    textShadow: "0 1px 2px rgba(0,0,0,0.6)",
     pointerEvents: "none",
-    zIndex: 5,
-  },
-  gradientBottom: {
-    position: "absolute",
-    bottom: 0, left: 0, right: 0, height: 220,
-    background: "linear-gradient(0deg, rgba(0,0,0,0.70), rgba(0,0,0,0))",
-    pointerEvents: "none",
-    zIndex: 5,
   },
 
-  overlayCenter: {
-    position: "absolute",
-    inset: 0,
-    display: "grid",
-    placeItems: "center",
-    padding: "0 24px",
-    zIndex: 10,
+  stage: { position: "absolute", inset: 0, overflow: "hidden" },
+  mirrored: { transform: "scaleX(-1)" },
+  cam: { width: "100%", height: "100%", objectFit: "cover" },
+
+  overlay: {
+    position: "absolute", inset: 0,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "0 16px",
   },
 
-  introWrap: {
-    maxWidth: 560,
+  // Intro – węższa kolumna, środek
+  introBox: {
+    maxWidth: 520,
     textAlign: "center",
-    lineHeight: 1.45,
-    background: "rgba(0,0,0,0.35)",
-    padding: "16px 18px",
-    borderRadius: 14,
-    border: "1px solid rgba(255,255,255,0.08)",
-    boxShadow: "0 12px 36px rgba(0,0,0,0.35)",
+    lineHeight: 1.55,
+    fontSize: 16,
+    opacity: 0.95,
   },
-  introLine: { fontSize: 18, color: "rgba(255,255,255,0.95)" },
-  micError: { marginTop: 14, color: "#ffb3b3", fontSize: 14 },
+  introP: { margin: "0.25rem 0" },
 
-  centerWrap: {
-    position: "absolute",
-    inset: 0,
-    display: "grid",
-    placeItems: "center",
-    padding: "0 24px",
-    textAlign: "center",
-    zIndex: 8,
-  },
+  // Główny tekst – idealny środek
   centerText: {
-    fontSize: "clamp(22px, 3.8vw, 34px)",
-    lineHeight: 1.45,
-    maxWidth: 760,
+    position: "absolute",
+    top: "50%", left: "50%",
+    transform: "translate(-50%, -50%)",
+    maxWidth: 700,
+    padding: "0 12px",
+    textAlign: "center",
+    fontSize: 22,
+    lineHeight: 1.5,
+    textShadow: "0 1px 2px rgba(0,0,0,0.6)",
     whiteSpace: "pre-wrap",
-    textShadow: "0 2px 10px rgba(0,0,0,0.55)",
-    fontWeight: 700,
-    letterSpacing: 0.2,
   },
 
+  // Transkrypt u góry (bez tła)
   transcriptTop: {
     position: "absolute",
-    top: 112,
-    left: 16,
-    right: 16,
+    top: 106, left: 0, right: 0,
     textAlign: "center",
-    fontSize: "clamp(18px, 3.3vw, 24px)",
-    lineHeight: 1.35,
-    color: "rgba(255,255,255,0.98)",
-    pointerEvents: "none",
-    textShadow: "0 1px 6px rgba(0,0,0,0.65)",
+    fontSize: 18,
+    fontWeight: 500,
     minHeight: 26,
-    fontWeight: 600,
-    zIndex: 9,
+    padding: "0 12px",
+    textShadow: "0 1px 2px rgba(0,0,0,0.45)",
+    whiteSpace: "pre-wrap",
   },
 
+  // Przypominajka ~dolna część środka
   hint: {
     position: "absolute",
-    left: 0, right: 0,
-    top: "70%",
-    padding: "0 24px",
+    bottom: 72, left: 0, right: 0,
     textAlign: "center",
     fontSize: 16,
     lineHeight: 1.35,
     color: "rgba(255,255,255,0.95)",
-    textShadow: "0 2px 8px rgba(0,0,0,0.6)",
+    textShadow: "0 1px 2px rgba(0,0,0,0.6)",
     pointerEvents: "none",
-    zIndex: 12,
   },
 
-  vu: {
+  // Overlay dotyku przy 3. przypominajce
+  tapOverlay: {
+    position: "absolute", inset: 0,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    background: "rgba(0,0,0,0.25)",
+  },
+  tapOverlayInner: {
+    fontSize: 16,
+    padding: "10px 14px",
+    borderRadius: 10,
+    background: "rgba(0,0,0,0.35)",
+    border: "1px solid rgba(255,255,255,0.25)",
+  },
+
+  // VU po prawej
+  vuWrap: {
     position: "absolute",
-    right: 10,
-    top: 82,
-    bottom: 14,
-    width: 7,
-    borderRadius: 7,
-    background: "rgba(255,255,255,0.08)",
+    top: 70, bottom: 20, right: 10,
+    width: 8,
+    borderRadius: 6,
+    background: "rgba(255,255,255,0.09)",
     overflow: "hidden",
-    zIndex: 12,
-    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.06)",
   },
   vuFill: {
     position: "absolute",
-    bottom: 0, left: 0, right: 0,
-    background: "linear-gradient(180deg,#7cdcff 0%,#6aff93 52%,#ffbe5c 100%)",
-    borderRadius: 7,
-    transition: "height 110ms linear",
-    boxShadow: "0 0 18px rgba(255,255,255,0.15)",
+    left: 0, bottom: 0, right: 0,
+    background: "rgba(255,255,255,0.85)",
+    transition: "height 120ms linear",
   },
 };
