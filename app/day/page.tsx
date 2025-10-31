@@ -59,7 +59,7 @@ export default function PrompterPage() {
 
   // Progi/czasy
   const SPEAKING_FRAMES_REQUIRED = 2;
-  const SILENCE_HINT_MS = 7000;   // hint po 7 s ciszy (wielokrotny)
+  const SILENCE_HINT_MS = 7000;   // hint po 7 s ciszy (powracający)
   const HARD_CAP_MS = 12000;      // VERIFY: auto-next po 12 s
   const ADVANCE_AFTER_SPEAK_MS = 4000; // VERIFY: 4 s po mowie
 
@@ -127,9 +127,11 @@ export default function PrompterPage() {
 
   function startSilenceWatch() {
     stopSilenceWatch();
-    lastSoundAtRef.current = Date.now(); // zresetuj przy starcie kroku
+    // start od „teraz” – jeśli nic nie mówisz, hint pojawi się po SILENCE_HINT_MS
+    lastSoundAtRef.current = Date.now();
     silenceWatchIdRef.current = window.setInterval(() => {
       const dt = Date.now() - lastSoundAtRef.current;
+      // jeśli nie ma analizera (np. brak zgody) — nadal licz czas i pokazuj hint
       if (dt >= SILENCE_HINT_MS) {
         if (!showSilenceHintRef.current) setShowSilenceHint(true);
       } else {
@@ -226,7 +228,7 @@ export default function PrompterPage() {
         const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
         if (speakingNow) {
           speakingFramesRef.current += 1;
-          lastSoundAtRef.current = Date.now();   // <— odśwież przy mowie
+          lastSoundAtRef.current = Date.now();   // reset licznika ciszy
           if (showSilenceHintRef.current) setShowSilenceHint(false);
 
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
@@ -246,7 +248,7 @@ export default function PrompterPage() {
           }
         } else {
           speakingFramesRef.current = 0;
-          // brak mowy — „watcher” zajmie się hintem po 7 s
+          // dalszą logikę ciszy obsługuje watcher
         }
 
         window.setTimeout(() => setSpeakingBlink(false), 120);
@@ -276,9 +278,7 @@ export default function PrompterPage() {
   function startSayCapture() {
     sayActiveRef.current = true;
     setSayTranscript("");
-
-    // jeśli coś już działało — czyścimy
-    stopSayCapture();
+    stopSayCapture(); // safety
 
     const SR = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
     if (!SR) {
@@ -345,8 +345,8 @@ export default function PrompterPage() {
       if (ref.current) window.clearTimeout(ref.current);
       ref.current = null;
     });
-    stopSilenceWatch();           // <— wyłącz watcher ciszy
-    setShowSilenceHint(false);    // i schowaj hint
+    stopSilenceWatch();
+    setShowSilenceHint(false);
   }
 
   function runStep(i: number) {
@@ -357,32 +357,29 @@ export default function PrompterPage() {
     clearStepTimers();
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
-    lastSoundAtRef.current = Date.now(); // start kroku → licznik ciszy od zera
+    lastSoundAtRef.current = Date.now();
+
+    // uruchom watcher ciszy *na każdym kroku*
+    startSilenceWatch();
 
     if (s.mode === "VERIFY") {
-      stopSayCapture(); // safety
+      stopSayCapture();
       setDisplayText(s.target || "");
 
-      // watcher ciszy uruchamiamy natychmiast
-      startSilenceWatch();
-
-      // awaryjny „cap” żeby nie utknąć
+      // awaryjny cap, by nie utknąć
       hardCapTimerRef.current = window.setTimeout(() => {
         if (idxRef.current === i) gotoNext(i);
       }, HARD_CAP_MS);
 
     } else {
-      const prep = Number(s.prep_ms ?? 2000);    // 2s na przeczytanie pytania
-      const dwell = Number(s.dwell_ms ?? 12000); // 12s aktywnego okna
+      const prep = Number(s.prep_ms ?? 2000);
+      const dwell = Number(s.dwell_ms ?? 12000);
 
       stopSayCapture();
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // watcher ciszy: startujemy od razu, ale realnie liczy się cisza po odczytaniu pytania
-      startSilenceWatch();
-
-      // po prep_ms start natychmiastowej transkrypcji
+      // po prep_ms start transkrypcji
       stepTimerRef.current = window.setTimeout(() => {
         if (idxRef.current !== i) return;
         startSayCapture();
@@ -410,6 +407,9 @@ export default function PrompterPage() {
   const startSession = async () => {
     if (!stepsRef.current.length) return;
     const ok = await startAV();
+    // niezależnie od powodzenia audio — watcher ciszy ma działać (fail-safe)
+    startSilenceWatch();
+
     if (!ok) { setIsRunning(false); return; }
     setIsRunning(true);
     startCountdown(MAX_TIME);
@@ -430,7 +430,14 @@ export default function PrompterPage() {
   /* ---- 5) Render ---- */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-  // Styl transcriptu (czytelny, ale nie „super gruby”)
+  // Styl pytania i transcriptu (czytelnie, ale nie „super grubo”)
+  const questionStyle: React.CSSProperties = {
+    fontSize: "clamp(18px, 3.6vw, 22px)",
+    lineHeight: 1.5,
+    maxWidth: 820,
+    margin: "0 auto",
+    textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+  };
   const transcriptStyle: React.CSSProperties = {
     marginTop: 14,
     fontSize: "clamp(18px, 4.2vw, 24px)",
@@ -450,6 +457,17 @@ export default function PrompterPage() {
     marginLeft: "auto",
     marginRight: "auto",
     backdropFilter: "blur(2px)",
+  };
+  const hintStyle: React.CSSProperties = {
+    marginTop: 10,
+    textAlign: "center",
+    fontSize: 15,
+    lineHeight: 1.35,
+    color: "rgba(255,255,255,0.94)",
+    textShadow: "0 1px 2px rgba(0,0,0,0.55)",
+    opacity: showSilenceHint ? 0.98 : 0,
+    transition: "opacity 180ms ease",
+    pointerEvents: "none",
   };
 
   return (
@@ -502,7 +520,7 @@ export default function PrompterPage() {
 
         {/* OVERLAY SESJI */}
         {isRunning && (
-          <div className="overlay center" style={{ paddingBottom: 96 }}>
+          <div className="overlay center" style={{ paddingBottom: 64 }}>
             {/* VERIFY = tekst do powtórzenia */}
             {steps[idx]?.mode === "VERIFY" && (
               <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
@@ -510,49 +528,12 @@ export default function PrompterPage() {
               </div>
             )}
 
-            {/* SAY = pytanie + transkrypt pod spodem + hint powracający po 7 s ciszy */}
+            {/* SAY = pytanie + transkrypt + hint inline (zawsze w kadrze) */}
             {steps[idx]?.mode === "SAY" && (
-              <div
-                className="center-text fade"
-                style={{ whiteSpace: "pre-wrap", position: "relative", maxWidth: 900, margin: "0 auto" }}
-              >
-                <div
-                  style={{
-                    fontSize: "clamp(18px, 3.6vw, 22px)",
-                    lineHeight: 1.5,
-                    maxWidth: 820,
-                    margin: "0 auto",
-                    textShadow: "0 1px 2px rgba(0,0,0,0.35)",
-                  }}
-                >
-                  {displayText}
-                </div>
-
-                <div style={transcriptStyle}>
-                  {sayTranscript}
-                </div>
-
-                {showSilenceHint && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      right: 0,
-                      bottom: 28,
-                      padding: "0 24px",
-                      textAlign: "center",
-                      fontSize: 15,
-                      lineHeight: 1.35,
-                      color: "rgba(255,255,255,0.94)",
-                      textShadow: "0 1px 2px rgba(0,0,0,0.55)",
-                      pointerEvents: "none",
-                      opacity: 0.96,
-                      transition: "opacity 180ms ease",
-                    }}
-                  >
-                    Czy możesz powiedzieć coś na głos?
-                  </div>
-                )}
+              <div className="center-text fade" style={{ whiteSpace: "pre-wrap", position: "relative", maxWidth: 900, margin: "0 auto" }}>
+                <div style={questionStyle}>{displayText}</div>
+                <div style={transcriptStyle}>{sayTranscript}</div>
+                <div style={hintStyle}>Czy możesz powiedzieć coś na głos?</div>
               </div>
             )}
           </div>
