@@ -1,20 +1,12 @@
 {
   "steps": [
-    { "mode": "VERIFY", "target": "Mam do siebie bardzo duży szacunek." },
-    { "mode": "VERIFY", "target": "Dziękuję sobie za bycie odważnym człowiekiem." },
-    { "mode": "VERIFY", "target": "Podziwiam swoją odwagę coraz bardziej." },
-
-    {
-      "mode": "SAY",
-      "prompt": "Wymień cechę, z której jesteś najbardziej dumny. Bądź dla siebie dobry — to, co powiesz, pojawi się na ekranie.",
-      "prep_ms": 2000,
-      "dwell_ms": 12000
-    },
-    {
-      "mode": "SAY",
-      "prompt": "Powiedz o jednym osiągnięciu, z którego jesteś dumny. To, co powiesz, pojawi się na ekranie.",
-      "prep_ms": 2000,
-      "dwell_ms": 12000
-    }
+    { "mode": "SAY", "prompt": "Powiedz jedną cechę, z której jesteś dumny.", "prep_ms": 1500, "dwell_ms": 7000 },
+    { "mode": "SAY", "prompt": "Podaj drugą cechę, która Cię wzmacnia.", "prep_ms": 1200, "dwell_ms": 7000 },
+    { "mode": "SAY", "prompt": "Wymień jedno osiągnięcie, które cenisz.", "prep_ms": 1200, "dwell_ms": 8000 },
+    { "mode": "SAY", "prompt": "Dodaj przykład zachowania, z którego jesteś zadowolony.", "prep_ms": 1200, "dwell_ms": 7000 },
+    { "mode": "SAY", "prompt": "Nazwij jedną rzecz, za którą sobie dziękujesz.", "prep_ms": 1200, "dwell_ms": 7000 },
+    { "mode": "SAY", "prompt": "Wskaż obszar, w którym czujesz sprawczość.", "prep_ms": 1200, "dwell_ms": 8000 },
+    { "mode": "SAY", "prompt": "Co dziś zrobisz dla własnego spokoju?", "prep_ms": 1200, "dwell_ms": 8000 },
+    { "mode": "SAY", "prompt": "Dokończ: Doceniam w sobie to, że…", "prep_ms": 1200, "dwell_ms": 9000 }
   ]
 }
