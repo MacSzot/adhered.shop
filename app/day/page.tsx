@@ -123,101 +123,135 @@ export default function PrompterPage() {
 
   /* ===== AUDIO/VIDEO + VAD ===== */
   async function startAV(): Promise<boolean> {
-    stopAV();
-    setMicError(null);
-    speakingFramesRef.current = 0;
+  stopAV();
+  setMicError(null);
+  speakingFramesRef.current = 0;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        channelCount: 1
+      }
+    });
+    streamRef.current = stream;
+    if (videoRef.current) (videoRef.current as any).srcObject = stream;
+
+    const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+    const ac = new Ctx();
+    audioCtxRef.current = ac;
+    if (ac.state === "suspended") {
+      try { await ac.resume(); } catch {}
+      document.addEventListener("click", () => ac.resume().catch(()=>{}), { once: true });
+    }
+
+    const analyser = ac.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.85;
+    ac.createMediaStreamSource(stream).connect(analyser);
+    analyserRef.current = analyser;
+
+    const data = new Uint8Array(analyser.fftSize);
+
+    // --------- AUTOKALIBRACJA SZUMU (ok. 2 s) ----------
+    const calibStart = performance.now();
+    let rmsSum = 0, peakSum = 0, samp = 0;
+    let noiseRms = 0.02, noisePeak = 0.04; // bezpieczne defaulty
+    while (performance.now() - calibStart < 2000) {
+      analyser.getByteTimeDomainData(data);
+      let p = 0, s2 = 0;
+      for (let i = 0; i < data.length; i++) {
+        const x = (data[i] - 128) / 128;
+        const a = Math.abs(x);
+        if (a > p) p = a;
+        s2 += x * x;
+      }
+      rmsSum += Math.sqrt(s2 / data.length);
+      peakSum += p;
+      samp++;
+      await new Promise(r => requestAnimationFrame(r));
+    }
+    noiseRms = Math.max(0.01, rmsSum / Math.max(1, samp));
+    noisePeak = Math.max(0.02, peakSum / Math.max(1, samp));
+
+    // progi głosu: trochę powyżej szumu
+    const TH_RMS = Math.min(0.12, noiseRms * 2.2 + 0.01);
+    const TH_PEAK = Math.min(0.25, noisePeak * 2.0 + 0.02);
+    const TH_VU = 10; // tylko pomocniczo do paska
+
+    // resetujemy licznik ciszy dopiero teraz
     lastVoiceAtRef.current = Date.now();
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1
-        }
-      });
-      streamRef.current = stream;
-      if (videoRef.current) (videoRef.current as any).srcObject = stream;
+    // watchdog liczący rzeczywistą ciszę
+    const WATCHDOG_MS = 10_000;
 
-      const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
-      const ac = new Ctx();
-      audioCtxRef.current = ac;
+    // mówienie uznajemy dopiero po kilku klatkach z rzędu
+    const REQUIRE_FRAMES = 5; // ~250ms przy 60 fps
+    let speakingStreak = 0;
 
-      if (ac.state === "suspended") {
-        await ac.resume().catch(() => {});
-        const resumeOnClick = () => ac.resume().catch(() => {});
-        document.addEventListener("click", resumeOnClick, { once: true });
+    const loop = () => {
+      if (!analyserRef.current || !isRunningRef.current) return;
+
+      analyser.getByteTimeDomainData(data);
+
+      let peak = 0, sumSq = 0;
+      for (let i = 0; i < data.length; i++) {
+        const x = (data[i] - 128) / 128;
+        const a = Math.abs(x);
+        if (a > peak) peak = a;
+        sumSq += x * x;
       }
 
-      const analyser = ac.createAnalyser();
-      analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.86;
-      ac.createMediaStreamSource(stream).connect(analyser);
-      analyserRef.current = analyser;
+      const rms = Math.sqrt(sumSq / data.length);
+      const vu = Math.min(100, peak * 480);
+      setLevelPct((prev) => Math.max(vu, prev * 0.85));
 
-      const data = new Uint8Array(analyser.fftSize);
+      const speakingNow = (rms > TH_RMS) && (peak > TH_PEAK);
 
-      const loop = () => {
-        if (!analyserRef.current || !isRunningRef.current) return;
-
-        analyser.getByteTimeDomainData(data);
-
-        let peak = 0,
-          sumSq = 0;
-        for (let i = 0; i < data.length; i++) {
-          const x = (data[i] - 128) / 128;
-          const a = Math.abs(x);
-          if (a > peak) peak = a;
-          sumSq += x * x;
+      if (speakingNow) {
+        speakingStreak++;
+        if (speakingStreak >= REQUIRE_FRAMES) {
+          lastVoiceAtRef.current = Date.now();
+          setSpeakingBlink(true);
         }
-        const rms = Math.sqrt(sumSq / data.length);
-        const vu = Math.min(100, peak * 480);
+      } else {
+        speakingStreak = 0;
+      }
+      setTimeout(() => setSpeakingBlink(false), 120);
 
-        setLevelPct((prev) => Math.max(vu, prev * 0.85));
-
-        const speakingNow = rms > 0.017 || peak > 0.04 || vu > 7;
-
-        if (speakingNow) {
-          speakingFramesRef.current += 1;
-          if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
-            setSpeakingBlink(true);
-            lastVoiceAtRef.current = Date.now(); // słyszeliśmy głos → reset licznika ciszy
-          }
-        } else {
-          speakingFramesRef.current = 0;
+      // ---- JEDYNA PRZYPOMINAJKA po 10 s rzeczywistej ciszy ----
+      if (isRunningRef.current && !silencePause) {
+        const now = Date.now();
+        if (now - lastVoiceAtRef.current >= WATCHDOG_MS) {
+          // pauzujemy zegar
+          const secsLeft = endAtRef.current != null
+            ? Math.max(0, Math.ceil((endAtRef.current - now) / 1000))
+            : remaining;
+          stopCountdown();
+          setRemaining(secsLeft);
+          setSilencePause(true);
         }
-        // wyłącz mignięcie kropek po chwili
-        window.setTimeout(() => setSpeakingBlink(false), 120);
+      }
 
-        // ======= JEDYNA PRZYPOMINAJKA: po 10 s ciszy =========
-        if (isRunningRef.current && !silencePause) {
-          const now = Date.now();
-          if (now - lastVoiceAtRef.current >= SILENCE_TRIGGER_MS) {
-            // zatrzymaj licznik, pokaż overlay
-            const secsLeft =
-              endAtRef.current != null ? Math.max(0, Math.ceil((endAtRef.current - now) / 1000)) : remaining;
-            stopCountdown();
-            setRemaining(secsLeft);
-            setSilencePause(true);
-          }
-        }
-
-        rafRef.current = requestAnimationFrame(loop);
-      };
       rafRef.current = requestAnimationFrame(loop);
-      return true;
-    } catch (err: any) {
-      console.error("getUserMedia error:", err);
-      setMicError(
-        err?.name === "NotAllowedError"
-          ? "Brak zgody na mikrofon/kamerę."
-          : "Nie udało się uruchomić mikrofonu/kamery."
-      );
-      return false;
-    }
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return true;
+  } catch (err: any) {
+    console.error("getUserMedia error:", err);
+    setMicError(
+      err?.name === "NotAllowedError"
+        ? "Brak zgody na mikrofon/kamerę."
+        : "Nie udało się uruchomić mikrofonu/kamery."
+    );
+    return false;
   }
+}
+
 
   function stopAV() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
