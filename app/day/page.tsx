@@ -2,20 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 
-/** ===== Typ kroku dnia ===== */
+/** ===== Typ kroku ===== */
 type PlanStep = {
   mode: "VERIFY" | "SAY";
-  target?: string;     // dla VERIFY
-  prompt?: string;     // dla SAY
+  target?: string;
+  prompt?: string;
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
-  prep_ms?: number;    // opóźnienie przed startem nasłuchu SAY
-  dwell_ms?: number;   // ile trwa okno SAY
+  prep_ms?: number;
+  dwell_ms?: number;
   note?: string;
 };
 
-/** ===== Pomocnicze ===== */
+/** ===== Helpers ===== */
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
@@ -44,7 +44,7 @@ async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" 
 
 /** ===== Strona ===== */
 export default function PrompterPage() {
-  // Ustawienia / parametry dnia
+  // Parametry dnia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
   const dayFileParam = dayRaw.padStart(2, "0");
@@ -54,20 +54,20 @@ export default function PrompterPage() {
   })();
 
   // Limity / czasy
-  const MAX_TIME = 6 * 60;            // cała sesja ~6 min
-  const SPEAKING_FRAMES_REQUIRED = 2; // ile ramek „głosu” z rzędu
-  const SILENCE_HINT_MS = 7000;       // po 7 s ciszy pokaż hint
-  const HARD_CAP_MS = 12000;          // po 12 s wymuś „dalej” (w kroku)
-  const ADVANCE_AFTER_SPEAK_MS = 4000;// VERIFY: 4 s po głosie → „dalej”
+  const MAX_TIME = 6 * 60;
+  const SPEAKING_FRAMES_REQUIRED = 2;
+  const SILENCE_HINT_MS = 7000;
+  const HARD_CAP_MS = 12000;
+  const ADVANCE_AFTER_SPEAK_MS = 4000;
 
-  // Stan programu
+  // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
 
-  // Kamera / audio / VAD
+  // AV refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -78,12 +78,12 @@ export default function PrompterPage() {
   const heardThisStepRef = useRef(false);
   const rafRef = useRef<number | null>(null);
 
-  // Transkrypcja „SAY”
+  // SAY
   const [sayTranscript, setSayTranscript] = useState<string>("");
   const sayActiveRef = useRef(false);
   const recognitionRef = useRef<any>(null);
 
-  // Timer sesji
+  // Timery sesji
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
 
@@ -93,15 +93,15 @@ export default function PrompterPage() {
   const silenceHintTimerRef = useRef<number | null>(null);
   const hardCapTimerRef = useRef<number | null>(null);
 
-  // Lusterko
+  // UI
   const [mirror] = useState(true);
 
-  // Przypominajki: 1 → 2 → 3 (po 3 wymagamy dotyku; potem już nigdy nie pokazujemy)
+  // Przypominajki
   const [hintStage, setHintStage] = useState<0 | 1 | 2 | 3>(0);
   const hintsDisabledRef = useRef(false);
   const [tapToContinueVisible, setTapToContinueVisible] = useState(false);
 
-  // Refy aktualnych wartości
+  // Refs aktualnych wartości
   const isRunningRef = useRef(isRunning);
   const idxRef = useRef(idx);
   const stepsRef = useRef<PlanStep[]>([]);
@@ -109,7 +109,7 @@ export default function PrompterPage() {
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
 
-  /** Wczytaj plan dnia */
+  /** Wczytaj plan */
   useEffect(() => {
     (async () => {
       try {
@@ -215,12 +215,12 @@ export default function PrompterPage() {
         if (speakingNow) {
           speakingFramesRef.current += 1;
 
-          // jeśli ktoś mówi – nie pokazujemy przypominajek
+          // gdy ktoś mówi — chowamy przypominajki
           if (!hintsDisabledRef.current) setHintStage(0);
 
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             const s = stepsRef.current[idxRef.current];
-            // VERIFY: po pierwszym głosie odlicz 4 s i przejdź dalej
+            // VERIFY: po pierwszym głosie → 4 s i dalej
             if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
               heardThisStepRef.current = true;
               clearOnly(["silence", "hard"]);
@@ -354,7 +354,7 @@ export default function PrompterPage() {
   function clearStepTimers() { clearOnly(["step","advance","silence","hard"]); }
 
   function scheduleSilenceAndHard(i: number) {
-    // Przypominajki (tylko jeśli nie wyłączone po 3 etapie)
+    // Przypominajki: 1 → 2 → 3 (po 3 dotknij ekranu; potem wyłączone)
     if (!hintsDisabledRef.current) {
       clearOnly(["silence"]);
       silenceHintTimerRef.current = window.setTimeout(() => {
@@ -362,27 +362,22 @@ export default function PrompterPage() {
         setHintStage(prev => {
           if (prev >= 3) return 3;
           const next = (prev + 1) as 1 | 2 | 3;
-          if (next === 3) {
-            // trzeci hint → pokaż „dotknij ekranu”
-            setTapToContinueVisible(true);
-          }
+          if (next === 3) setTapToContinueVisible(true);
           return next;
         });
       }, SILENCE_HINT_MS);
     }
-
-    // Wymuś przejście kroku po HARD_CAP_MS, ale
-    // jeśli aktywny jest etap 3 i czekamy na dotyk — NIE wymuszaj automatu
+    // Hard-cap kroku (nie wtrąca się, jeśli czekamy na dotyk przy 3)
     clearOnly(["hard"]);
     hardCapTimerRef.current = window.setTimeout(() => {
       if (idxRef.current !== i) return;
-      if (tapToContinueVisible) return; // czekamy na dotyk przy 3 etapie
+      if (tapToContinueVisible) return;
       stopSayCapture();
       gotoNext(i);
     }, HARD_CAP_MS);
   }
 
-  /** Uruchom krok i */
+  /** Krok */
   function runStep(i: number) {
     if (!stepsRef.current.length) return;
     const s = stepsRef.current[i];
@@ -407,14 +402,11 @@ export default function PrompterPage() {
       setDisplayText(s.prompt || "");
       setSayTranscript("");
 
-      // od razu odpalamy liczniki przypominajek / hard-cap
       scheduleSilenceAndHard(i);
 
-      // po prep start rozpoznawania
       stepTimerRef.current = window.setTimeout(() => {
         if (idxRef.current !== i) return;
         startSayCapture();
-        // po dwell kończymy SAY
         stepTimerRef.current = window.setTimeout(() => {
           if (idxRef.current !== i) return;
           stopSayCapture();
@@ -437,13 +429,20 @@ export default function PrompterPage() {
     runStep(next);
   }
 
-  /** Obsługa dotyku przy 3. przypominajce */
+  /** Dotyk przy 3. przypominajce */
   function handleTapToContinue() {
     if (!tapToContinueVisible) return;
     setTapToContinueVisible(false);
     setHintStage(0);
-    // od teraz nie pokazujemy już przypominajek
-    hintsDisabledRef.current = true;
+    hintsDisabledRef.current = true; // od teraz brak przypominajek
+  }
+
+  /** Tekst przypominajek – fix dla TS (0 nie istnieje) */
+  function getHint(stage: 0 | 1 | 2 | 3): string {
+    if (stage === 1) return "Jeśli możesz, postaraj się przeczytać na głos.";
+    if (stage === 2) return "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.";
+    if (stage === 3) return "Jeśli chcesz kontynuować, dotknij ekranu.";
+    return "";
   }
 
   /** Render */
@@ -474,26 +473,24 @@ export default function PrompterPage() {
         </div>
       </header>
 
-      {/* Zegar – zawsze u góry, centralnie */}
+      {/* Zegar */}
       <div style={styles.timerTop}>{fmt(remaining)}</div>
 
       {/* Scena */}
-      <div style={{ ...styles.stage, ...(mirror ? styles.mirrored : {}) }} onClick={handleTapToContinue} onTouchStart={handleTapToContinue}>
+      <div
+        style={{ ...styles.stage, ...(mirror ? styles.mirrored : {}) }}
+        onClick={handleTapToContinue}
+        onTouchStart={handleTapToContinue}
+      >
         <video ref={videoRef} autoPlay playsInline muted style={styles.cam} />
 
-        {/* Intro (przed startem) */}
+        {/* Intro */}
         {!isRunning && (
           <div style={styles.overlay}>
             <div style={styles.introBox}>
-              <p style={styles.introP}>
-                Twoja sesja potrwa około <b>6 minut</b>.
-              </p>
-              <p style={{ ...styles.introP, marginTop: 10 }}>
-                Prosimy o powtarzanie na głos wyświetlanych treści.
-              </p>
-              <p style={{ ...styles.introP, marginTop: 10 }}>
-                Aktywowano analizator dźwięku <b>MeRoar™</b>.
-              </p>
+              <p style={styles.introP}>Twoja sesja potrwa około <b>6 minut</b>.</p>
+              <p style={{ ...styles.introP, marginTop: 10 }}>Prosimy o powtarzanie na głos wyświetlanych treści.</p>
+              <p style={{ ...styles.introP, marginTop: 10 }}>Aktywowano analizator dźwięku <b>MeRoar™</b>.</p>
               {micError && (
                 <p style={{ marginTop: 14, color: "#ffb3b3", fontSize: 14, textAlign: "center" }}>
                   {micError}
@@ -506,29 +503,20 @@ export default function PrompterPage() {
         {/* Sesja */}
         {isRunning && (
           <div style={styles.overlay}>
-            {/* Transkrypt u góry (bez tła) */}
+            {/* Transkrypt SAY u góry */}
             {isSay && (
-              <div style={styles.transcriptTop}>
-                {sayTranscript}
-              </div>
+              <div style={styles.transcriptTop}>{sayTranscript}</div>
             )}
 
-            {/* Tekst główny – ścisły środek ekranu */}
-            <div style={styles.centerText}>
-              {displayText}
-            </div>
+            {/* Główny tekst – środek */}
+            <div style={styles.centerText}>{displayText}</div>
 
-            {/* Przypominajki – pojawiają się na środku dolnej części, po 7 s ciszy.
-                1: "Jeśli możesz, postaraj się przeczytać na głos"
-                2: "Pamiętaj — to przestrzeń pełna szacunku do Ciebie"
-                3: "Jeśli chcesz kontynuować, dotknij ekranu" */}
+            {/* Przypominajka (tylko jeśli włączone i stage>0) */}
             {hintStage > 0 && !hintsDisabledRef.current && (
-              <div style={styles.hint}>
-                {HINTS[hintStage]}
-              </div>
+              <div style={styles.hint}>{getHint(hintStage)}</div>
             )}
 
-            {/* „Dotknij ekranu” – aktywne tylko przy etapie 3; po dotyku wyłączamy przypominajki do końca sesji */}
+            {/* Tap overlay przy 3. */}
             {tapToContinueVisible && (
               <div style={styles.tapOverlay}>
                 <div style={styles.tapOverlayInner}>Dotknij ekranu, aby kontynuować</div>
@@ -537,7 +525,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* VU-meter po prawej */}
+        {/* VU-meter */}
         <div style={styles.vuWrap}>
           <div style={{ ...styles.vuFill, height: `${levelPct}%` }} />
         </div>
@@ -546,14 +534,7 @@ export default function PrompterPage() {
   );
 }
 
-/** ===== Stałe tekstów ===== */
-const HINTS: Record<1 | 2 | 3, string> = {
-  1: "Jeśli możesz, postaraj się przeczytać na głos.",
-  2: "Pamiętaj — to przestrzeń pełna szacunku do Ciebie.",
-  3: "Jeśli chcesz kontynuować, dotknij ekranu.",
-};
-
-/** ===== Style (prosto i bezpiecznie) ===== */
+/** ===== Style ===== */
 const styles: Record<string, React.CSSProperties> = {
   container: { position: "fixed", inset: 0, background: "black", color: "white", fontFamily: "system-ui, Inter, Arial, sans-serif" },
 
@@ -610,7 +591,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "0 16px",
   },
 
-  // Intro – węższa kolumna, środek
   introBox: {
     maxWidth: 520,
     textAlign: "center",
@@ -620,7 +600,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   introP: { margin: "0.25rem 0" },
 
-  // Główny tekst – idealny środek
   centerText: {
     position: "absolute",
     top: "50%", left: "50%",
@@ -634,7 +613,6 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "pre-wrap",
   },
 
-  // Transkrypt u góry (bez tła)
   transcriptTop: {
     position: "absolute",
     top: 106, left: 0, right: 0,
@@ -647,7 +625,6 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "pre-wrap",
   },
 
-  // Przypominajka ~dolna część środka
   hint: {
     position: "absolute",
     bottom: 72, left: 0, right: 0,
@@ -659,7 +636,6 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents: "none",
   },
 
-  // Overlay dotyku przy 3. przypominajce
   tapOverlay: {
     position: "absolute", inset: 0,
     display: "flex", alignItems: "center", justifyContent: "center",
@@ -673,7 +649,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(255,255,255,0.25)",
   },
 
-  // VU po prawej
   vuWrap: {
     position: "absolute",
     top: 70, bottom: 20, right: 10,
