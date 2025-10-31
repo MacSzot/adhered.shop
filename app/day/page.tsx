@@ -30,9 +30,9 @@ export default function PrompterPage() {
   const [running, setRunning] = useState(false);
   const [remain, setRemain] = useState(MAX_SESSION_SEC);
   const [stepIdx, setStepIdx] = useState(0);
-  const [hintStage, setHintStage] = useState<0 | 1 | 2 | 3>(0); // 0=brak; po 3 koniec
-  const [transcript, setTranscript] = useState("");             // pokaz u góry
-  const [level, setLevel] = useState(0);                        // VU-meter %
+  const [hintStage, setHintStage] = useState<0 | 1 | 2 | 3>(0);
+  const [transcript, setTranscript] = useState("");
+  const [level, setLevel] = useState(0);
   const [err, setErr] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -42,7 +42,6 @@ export default function PrompterPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const countdownRef = useRef<number | null>(null);
   const stepTimerRef = useRef<number | null>(null);
-  const silenceTimerRef = useRef<number | null>(null);
   const sayChunkTimerRef = useRef<number | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
@@ -74,7 +73,7 @@ export default function PrompterPage() {
       src.connect(analyser);
       analyserRef.current = analyser;
 
-      // MediaRecorder do wysyłki chunków do Whisper
+      // MediaRecorder → Whisper
       const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
       const chunks: BlobPart[] = [];
       mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
@@ -88,13 +87,10 @@ export default function PrompterPage() {
 
       // VAD pętla
       const buf = new Uint8Array(1024);
-      let speakingFrames = 0;
       let lastVoiceAt = Date.now();
-
       const loop = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteTimeDomainData(buf);
-        // prosty wskaźnik głośności
         let peak = 0, sumSq = 0;
         for (let i = 0; i < buf.length; i++) {
           const x = (buf[i] - 128) / 128;
@@ -108,16 +104,13 @@ export default function PrompterPage() {
 
         const speaking = rms > 0.02 || peak > 0.05 || vu > 8;
         if (speaking) {
-          speakingFrames++;
           lastVoiceAt = Date.now();
-          // reset podpowiedzi po pierwszym dźwięku
           if (hintStage > 0) setHintStage(0);
         }
-
-        // jeżeli cisza > 7 s → pokazujemy kolejny hint; po 3. już nigdy
+        // po 7 s ciszy pokazuj kolejne wskazówki, max do 3
         if (Date.now() - lastVoiceAt > 7000 && hintStage < 3) {
-          setHintStage((h) => ((h === 0 ? 1 : h + 1) as 1 | 2 | 3));
-          lastVoiceAt = Date.now(); // żeby nie spamować
+          setHintStage((h) => ((h === 0 ? 1 : (h + 1) as 1 | 2 | 3)));
+          lastVoiceAt = Date.now();
         }
 
         rafRef.current = requestAnimationFrame(loop);
@@ -127,10 +120,7 @@ export default function PrompterPage() {
       // licznik sesji
       countdownRef.current = window.setInterval(() => {
         setRemain((r) => {
-          if (r <= 1) {
-            stop();
-            return 0;
-          }
+          if (r <= 1) { stop(); return 0; }
           return r - 1;
         });
       }, 1000);
@@ -158,9 +148,6 @@ export default function PrompterPage() {
     if (stepTimerRef.current) window.clearTimeout(stepTimerRef.current);
     stepTimerRef.current = null;
 
-    if (silenceTimerRef.current) window.clearTimeout(silenceTimerRef.current);
-    silenceTimerRef.current = null;
-
     if (sayChunkTimerRef.current) window.clearInterval(sayChunkTimerRef.current);
     sayChunkTimerRef.current = null;
 
@@ -169,15 +156,8 @@ export default function PrompterPage() {
       mediaRecorderRef.current = null;
     }
 
-    if (acRef.current) {
-      try { acRef.current.close(); } catch {}
-      acRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
+    if (acRef.current) { try { acRef.current.close(); } catch {} acRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
 
     analyserRef.current = null;
     setLevel(0);
@@ -186,43 +166,33 @@ export default function PrompterPage() {
   /** ---- Kroki ---- */
   const runStep = (i: number) => {
     if (!DAY3[i]) return;
-
     setStepIdx(i);
-    setTranscript(""); // czyścimy górę dla nowego kroku
+    setTranscript("");
 
     const s = DAY3[i];
     const dwell = Math.max(2000, s.dwellMs ?? (s.mode === "SAY" ? 12000 : 4000));
 
-    // SAY → startujemy nagrywanie chunków co 4s
+    // SAY → nagrywanie chunków co 4s
     if (s.mode === "SAY" && mediaRecorderRef.current) {
-      try {
-        mediaRecorderRef.current.start(); // pierwszy segment
-      } catch {}
+      try { mediaRecorderRef.current.start(); } catch {}
       sayChunkTimerRef.current = window.setInterval(() => {
         if (!mediaRecorderRef.current || mediaRecorderRef.current.state !== "recording") return;
-        mediaRecorderRef.current.stop();     // wysyła poprzedni
-        try { mediaRecorderRef.current.start(); } catch {} // zaczyna nowy
+        mediaRecorderRef.current.stop();
+        try { mediaRecorderRef.current.start(); } catch {}
       }, 4000);
     }
 
-    // po dwell → kolejny krok
     stepTimerRef.current = window.setTimeout(() => {
-      // zatrzymujemy chunkowanie
-      if (sayChunkTimerRef.current) {
-        window.clearInterval(sayChunkTimerRef.current);
-        sayChunkTimerRef.current = null;
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-        try { mediaRecorderRef.current.stop(); } catch {}
-      }
+      if (sayChunkTimerRef.current) { window.clearInterval(sayChunkTimerRef.current); sayChunkTimerRef.current = null; }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") { try { mediaRecorderRef.current.stop(); } catch {} }
 
       const next = i + 1;
       if (next < DAY3.length) runStep(next);
-      else stop(); // koniec dnia
+      else stop();
     }, dwell);
   };
 
-  /** ---- Whisper: wysyłka chunków ---- */
+  /** ---- Whisper ---- */
   const sendChunkToWhisper = async (blob: Blob) => {
     try {
       const fd = new FormData();
@@ -232,13 +202,10 @@ export default function PrompterPage() {
       const j = await r.json();
       const t = (j?.text || "").trim();
       if (t) setTranscript((prev) => (prev ? prev + " " + t : t));
-    } catch {
-      /* cicho – fallback to VAD-only */
-    }
+    } catch { /* spokojnie – fallback tylko na VAD */ }
   };
 
-  /** ---- UI / Layout ---- */
-  // brak scrolla (zapobiega „czarnej dziurze”)
+  /** ---- Layout guards ---- */
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -256,7 +223,7 @@ export default function PrompterPage() {
           <span style={{ padding: "0 8px", opacity: 0.6 }}>•</span>
           <span style={styles.meta}><b>Dzień programu:</b> 3</span>
         </div>
-        <div style={styles.controls}>
+        <div>
           {!running ? (
             <button style={styles.btn} onClick={start}>Start</button>
           ) : (
@@ -268,93 +235,60 @@ export default function PrompterPage() {
       {/* Timer */}
       <div style={styles.timer}>{fmt(remain)}</div>
 
-      {/* Kamera */}
+      {/* Scena */}
       <div style={styles.stage}>
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          style={styles.cam}
-        />
-        {/* Nakładka treści */}
+        <video ref={videoRef} autoPlay playsInline muted style={styles.cam} />
         <div style={styles.overlay}>
-
-          {/* Tekst kroku w idealnym środku */}
+          {/* środek */}
           <div style={styles.centerBlock}>
-            {current?.mode === "VERIFY" && (
-              <div style={styles.verifyText}>{current.text}</div>
-            )}
-            {current?.mode === "SAY" && (
-              <div style={{ ...styles.verifyText }}>
-                {current.prompt}
-              </div>
-            )}
+            {current?.mode === "VERIFY" && <div style={styles.verifyText}>{current.text}</div>}
+            {current?.mode === "SAY" && <div style={styles.verifyText}>{current.prompt}</div>}
           </div>
 
-          {/* Transkrypcja u góry, bez tła */}
-          {transcript && (
-            <div style={styles.transcriptTop}>{transcript}</div>
-          )}
+          {/* transkrypcja u góry */}
+          {transcript && <div style={styles.transcriptTop}>{transcript}</div>}
 
-          {/* Jedna z podpowiedzi (max 3; po 3 cisza) */}
-          {hintStage > 0 && (
-            <div style={styles.hintCenter}>{HINTS[hintStage]}</div>
-          )}
+          {/* przypominajka – max 3 razy */}
+          {hintStage > 0 && <div style={styles.hintCenter}>{HINTS[hintStage]}</div>}
         </div>
 
-        {/* Prosty VU w prawym pasku */}
-        <div style={styles.meter}>
-          <div style={{ ...styles.meterFill, height: `${level}%` }} />
-        </div>
+        {/* VU-meter */}
+        <div style={styles.meter}><div style={{ ...styles.meterFill, height: `${level}%` }} /></div>
       </div>
 
-      {/* Błąd */}
       {err && <div style={styles.error}>{err}</div>}
     </main>
   );
 }
 
-/** ---------- Style (czysto inline, bez Tailwinda) ---------- */
+/** ---------- Style ---------- */
 const styles: Record<string, React.CSSProperties> = {
   root: { position: "fixed", inset: 0, background: "#000", color: "#fff", fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" },
 
   topbar: { position: "absolute", left: 0, right: 0, top: 0, height: 64, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", background: "rgba(20,20,20,0.55)", backdropFilter: "blur(6px)", zIndex: 20 },
   badgeRow: { display: "flex", alignItems: "center", gap: 4, fontSize: 14 },
   meta: { opacity: 0.95 },
-  controls: {},
   btn: { padding: "8px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.08)", color: "#fff", cursor: "pointer" },
 
   timer: { position: "absolute", top: 84, left: 0, right: 0, textAlign: "center", fontSize: 46, fontWeight: 800, textShadow: "0 2px 6px rgba(0,0,0,0.6)", zIndex: 15 },
 
   stage: { position: "absolute", inset: 0, overflow: "hidden" },
-  cam: { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }, // lustrzane odbicie
+  cam: { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" },
   overlay: { position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: "84px 16px 16px 16px" },
 
   centerBlock: { maxWidth: 800, textAlign: "center", padding: "0 12px" },
   verifyText: { fontSize: 28, lineHeight: 1.35, textShadow: "0 2px 6px rgba(0,0,0,0.55)" },
 
-  transcriptTop: {
-    position: "absolute", top: 128, left: 0, right: 0,
-    textAlign: "center", fontSize: 18, padding: "0 16px",
-    textShadow: "0 2px 6px rgba(0,0,0,0.55)", pointerEvents: "none"
-  },
+  transcriptTop: { position: "absolute", top: 128, left: 0, right: 0, textAlign: "center", fontSize: 18, padding: "0 16px", textShadow: "0 2px 6px rgba(0,0,0,0.55)", pointerEvents: "none" },
 
-  hintCenter: {
-    position: "absolute", bottom: "18%",
-    left: 0, right: 0, textAlign: "center",
-    fontSize: 18, opacity: 0.95, textShadow: "0 2px 6px rgba(0,0,0,0.55)",
-    pointerEvents: "none"
-  },
+  hintCenter: { position: "absolute", bottom: "18%", left: 0, right: 0, textAlign: "center", fontSize: 18, opacity: 0.95, textShadow: "0 2px 6px rgba(0,0,0,0.55)", pointerEvents: "none" },
 
   meter: { position: "absolute", top: 84, bottom: 16, right: 10, width: 8, background: "rgba(255,255,255,0.2)", borderRadius: 8, overflow: "hidden" },
   meterFill: { position: "absolute", left: 0, right: 0, bottom: 0, background: "#7CFC00" },
 
-  error: {
-    position: "absolute", bottom: 12, left: 12, right: 12,
-    padding: "10px 12px", background: "rgba(160,0,0,0.6)", borderRadius: 10, fontSize: 14
-  },
+  error: { position: "absolute", bottom: 12, left: 12, right: 12, padding: "10px 12px", background: "rgba(160,0,0,0.6)", borderRadius: 10, fontSize: 14 },
 };
+
 
 }
 
