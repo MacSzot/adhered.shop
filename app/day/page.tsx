@@ -47,13 +47,13 @@ export default function PrompterPage() {
 
   // Ustawienia
   const USER_NAME = "demo";
-  const DAY_LABEL = "Dzień " + ((typeof window !== "undefined") ? getParam("day", "01") : "01"); // naprawione ().
+  const DAY_LABEL = "Dzień " + ((typeof window !== "undefined") ? getParam("day", "01") : "01");
   const MAX_TIME = 6 * 60; // 6 minut
 
   // Progi/czasy VAD
-  const SPEAKING_FRAMES_REQUIRED = 2;         // ile kolejnych ramek uznajemy za „stabilny” głos
-  const SILENCE_MS = 7000;                    // po tylu ms ciszy pokaż hint
-  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // po pierwszym stabilnym głosie – przeskok po 4 s
+  const SPEAKING_FRAMES_REQUIRED = 2;         // stabilizacja
+  const SILENCE_MS = 7000;                    // hint po 7 s
+  const ADVANCE_AFTER_FIRST_SPEAK_MS = 4000;  // 4 s po pierwszym stabilnym głosie
 
   // Stany
   const [steps, setSteps] = useState<PlanStep[]>([]);
@@ -83,7 +83,6 @@ export default function PrompterPage() {
   /* ---------- TIMER stabilny (odlicza tylko po zgodzie na media) ---------- */
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
-
   function startCountdown(seconds: number) {
     stopCountdown();
     endAtRef.current = Date.now() + seconds * 1000;
@@ -111,10 +110,19 @@ export default function PrompterPage() {
   const streamRef = useRef<MediaStream | null>(null);
 
   // VAD pomocnicze
-  const heardThisStepRef = useRef(false);       // czy w tym kroku już rozpoznaliśmy mowę (do uruchomienia 4s timera)
-  const speakingFramesRef = useRef(0);          // ile kolejnych ramek jest „głosem”
-  const lastSpeakTsRef = useRef<number>(0);     // do hintu – kiedy ostatnio był głos lub start kroku
-  const stepTokenRef = useRef<number>(0);       // token, by unieważniać timery przy zmianie kroku
+  const heardThisStepRef = useRef(false);
+  const speakingFramesRef = useRef(0);
+  const lastSpeakTsRef = useRef<number>(0);
+  const stepTokenRef = useRef<number>(0);
+
+  // --- Nowe: automatyczna kalibracja tła ---
+  const noiseRmsRef = useRef(0.0);
+  const noisePeakRef = useRef(0.0);
+  const calibratingRef = useRef(true);
+  const calibUntilRef = useRef<number>(0);
+  const calibAccRmsRef = useRef(0.0);
+  const calibAccPeakRef = useRef(0.0);
+  const calibNRef = useRef(0);
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
@@ -140,6 +148,15 @@ export default function PrompterPage() {
     stopAV();
     setMicError(null);
     speakingFramesRef.current = 0;
+
+    // reset kalibracji
+    calibratingRef.current = true;
+    calibUntilRef.current = performance.now() + 1500; // 1.5 s
+    calibAccRmsRef.current = 0;
+    calibAccPeakRef.current = 0;
+    calibNRef.current = 0;
+    noiseRmsRef.current = 0.0;
+    noisePeakRef.current = 0.0;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -167,7 +184,7 @@ export default function PrompterPage() {
 
       const analyser = ac.createAnalyser();
       analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.86;
+      analyser.smoothingTimeConstant = 0.72; // szybciej reaguje
       ac.createMediaStreamSource(stream).connect(analyser);
       analyserRef.current = analyser;
 
@@ -190,43 +207,60 @@ export default function PrompterPage() {
 
         setLevelPct(prev => Math.max(vu, prev * 0.85));
 
-        // czułość VAD — lekko „podkręcona”, ale stabilizowana przez SPEAKING_FRAMES_REQUIRED
-        const speakingNow = (rms > 0.020) || (peak > 0.045) || (vu > 8);
-
-        if (speakingNow) {
-          speakingFramesRef.current += 1;
-          if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
-            lastSpeakTsRef.current = performance.now();
-            setSpeakingBlink(true);
-
-            // jeśli to pierwszy stabilny głos w tym kroku → ustawimy 4s do awansu
-            const s = stepsRef.current[idxRef.current];
-            if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
-              heardThisStepRef.current = true;
-              setShowSilenceHint(false);
-
-              // zapamiętaj token kroku; jeśli użytkownik zmieni się na inny step, timer się unieważni
-              const token = stepTokenRef.current;
-              if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
-              advanceTimerRef.current = window.setTimeout(() => {
-                if (token === stepTokenRef.current) {
-                  gotoNext(idxRef.current);
-                }
-              }, ADVANCE_AFTER_FIRST_SPEAK_MS);
-            }
+        // --- KALIBRACJA TŁA (pierwsze ~1.5 s) ---
+        const now = performance.now();
+        if (calibratingRef.current) {
+          calibAccRmsRef.current += rms;
+          calibAccPeakRef.current += peak;
+          calibNRef.current += 1;
+          if (now >= calibUntilRef.current) {
+            const n = Math.max(1, calibNRef.current);
+            noiseRmsRef.current = Math.min(0.02, (calibAccRmsRef.current / n) || 0.0);   // clamp górny
+            noisePeakRef.current = Math.min(0.04, (calibAccPeakRef.current / n) || 0.0); // clamp górny
+            calibratingRef.current = false;
+            // zacznij liczyć ciszę od teraz
+            lastSpeakTsRef.current = now;
           }
         } else {
-          speakingFramesRef.current = 0;
-        }
+          // --- DETEKCJA MÓWIENIA względem tła (bardziej czuła) ---
+          const speakingNow =
+            (rms > noiseRmsRef.current * 1.6 + 0.004) ||
+            (peak > noisePeakRef.current * 1.45 + 0.018) ||
+            (vu > 6);
 
-        // HINT po 7s ciszy od wejścia w krok lub ostatniego głosu
-        const silentFor = performance.now() - lastSpeakTsRef.current;
-        const s = stepsRef.current[idxRef.current];
-        if (s?.mode === "VERIFY") {
-          if (silentFor >= SILENCE_MS && !showSilenceHintRef.current) setShowSilenceHint(true);
-          if (silentFor < SILENCE_MS && showSilenceHintRef.current) setShowSilenceHint(false);
-        } else if (showSilenceHintRef.current) {
-          setShowSilenceHint(false);
+          if (speakingNow) {
+            speakingFramesRef.current += 1;
+            if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
+              lastSpeakTsRef.current = now;
+              setSpeakingBlink(true);
+
+              const s = stepsRef.current[idxRef.current];
+              if (s?.mode === "VERIFY" && !heardThisStepRef.current) {
+                heardThisStepRef.current = true;
+                setShowSilenceHint(false);
+
+                const token = stepTokenRef.current;
+                if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
+                advanceTimerRef.current = window.setTimeout(() => {
+                  if (token === stepTokenRef.current) {
+                    gotoNext(idxRef.current);
+                  }
+                }, ADVANCE_AFTER_FIRST_SPEAK_MS);
+              }
+            }
+          } else {
+            speakingFramesRef.current = 0;
+          }
+
+          // HINT po 7s ciszy od wejścia w krok / ostatniego głosu
+          const silentFor = now - lastSpeakTsRef.current;
+          const s = stepsRef.current[idxRef.current];
+          if (s?.mode === "VERIFY") {
+            if (silentFor >= SILENCE_MS && !showSilenceHintRef.current) setShowSilenceHint(true);
+            if (silentFor < SILENCE_MS && showSilenceHintRef.current) setShowSilenceHint(false);
+          } else if (showSilenceHintRef.current) {
+            setShowSilenceHint(false);
+          }
         }
 
         window.setTimeout(() => setSpeakingBlink(false), 120);
@@ -276,10 +310,12 @@ export default function PrompterPage() {
     setShowSilenceHint(false);
 
     if (s.mode === "VERIFY") {
-      // start liczenia ciszy OD TERAZ (dla hinta)
-      lastSpeakTsRef.current = performance.now();
+      // od wejścia w krok liczymy ciszę (jeśli kalibracja już się skończyła, to nadpisz)
+      if (!calibratingRef.current) {
+        lastSpeakTsRef.current = performance.now();
+      }
       setDisplayText(s.target || "");
-      // czekamy na VAD → po 1. stabilnym głosie poleci 4s timer (ustawiany w pętli VAD)
+      // VAD w pętli załatwia resztę (4 s po pierwszym głosie)
     } else {
       const prep = Number(s.prep_ms ?? 5000);
       const dwell = Number(s.dwell_ms ?? 45000);
@@ -309,7 +345,7 @@ export default function PrompterPage() {
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
 
-    // 2) Start sesji i TIMERA (stabilny stoper)
+    // 2) Start sesji i TIMERA
     setIsRunning(true);
     startCountdown(MAX_TIME);
 
