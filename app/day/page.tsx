@@ -73,6 +73,10 @@ export default function PrompterPage() {
   const [mirror] = useState(true);
   const [micError, setMicError] = useState<string | null>(null);
 
+  // ⏸️ Pauza ciszy: jedyna przypominajka po 10 s + ile zostało sekund
+  const [silencePause, setSilencePause] = useState(false);
+  const pausedRemainingRef = useRef<number | null>(null);
+
   // Refy aktualnych wartości
   const isRunningRef = useRef(isRunning);
   const idxRef = useRef(idx);
@@ -120,6 +124,8 @@ export default function PrompterPage() {
   // Whisper recorder
   const recRef = useRef<MediaRecorder | null>(null);
   const chunkTimerRef = useRef<number | null>(null);
+
+  // znacznik ostatniego realnego głosu (dla pauzy po 10 s)
   const lastVoiceAtRef = useRef<number>(Date.now());
 
   /* ---- 1) Wczytaj plan ---- */
@@ -142,11 +148,12 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---- 2) Start/Stop AV + VU ---- */
+  /* ---- 2) Start/Stop AV + VU + watchdog ciszy ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
     speakingFramesRef.current = 0;
+    lastVoiceAtRef.current = Date.now();
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -199,10 +206,29 @@ export default function PrompterPage() {
           speakingFramesRef.current += 1;
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             heardThisStepRef.current = true;
-            lastVoiceAtRef.current = Date.now();
+            lastVoiceAtRef.current = Date.now(); // ⏱️ rejestrujemy mowę
           }
         } else {
           speakingFramesRef.current = 0;
+        }
+
+        // ---- JEDYNA PRZYPOMINAJKA po 10 s rzeczywistej ciszy ----
+        if (isRunningRef.current && !silencePause) {
+          const now = Date.now();
+          if (now - lastVoiceAtRef.current >= 10_000) {
+            let secsLeft = remaining;
+            if (endAtRef.current != null) {
+              secsLeft = Math.max(0, Math.ceil((endAtRef.current - now) / 1000));
+            }
+            pausedRemainingRef.current = secsLeft;
+
+            // zatrzymujemy licznik (NIE resetujemy do 6:00)
+            stopCountdown();
+            setRemaining(secsLeft);
+
+            // włączamy pauzę i czekamy na tapnięcie
+            setSilencePause(true);
+          }
         }
 
         rafRef.current = requestAnimationFrame(loop);
@@ -225,6 +251,15 @@ export default function PrompterPage() {
       try { audioCtxRef.current.close(); } catch {}
       audioCtxRef.current = null;
     }
+  }
+
+  // 👉 wznowienie po tapnięciu w overlay pauzy
+  function resumeFromPause() {
+    if (!silencePause) return;
+    const secs = pausedRemainingRef.current ?? remaining;
+    startCountdown(secs);        // wznawiamy od miejsca przerwania
+    setSilencePause(false);
+    lastVoiceAtRef.current = Date.now(); // wyzeruj „ciszę”, żeby nie złapać od razu kolejnej pauzy
   }
 
   /* ===== WHISPER: start/stop ===== */
@@ -263,7 +298,7 @@ export default function PrompterPage() {
         const json = await resp.json();
         if (json?.text) {
           setSayTranscript((prev) => (prev ? prev + " " : "") + json.text);
-          lastVoiceAtRef.current = Date.now();
+          lastVoiceAtRef.current = Date.now(); // ruch głosu z serwera
         } else if (json?.error) {
           console.warn("Whisper API error:", json.error);
         }
@@ -311,7 +346,7 @@ export default function PrompterPage() {
     if (s.mode === "VERIFY") {
       stopSayCaptureWhisper();
       setDisplayText(s.target || "");
-      // automatycznie po głosie przeskakujemy po ~4s (opcjonalnie możesz dodać)
+      // (opcjonalne auto-next po mowie możesz tu dodać, ale nic nie zmieniamy)
     } else {
       const prep = Number(s.prep_ms ?? 200);     // szybki start
       const dwell = Number(s.dwell_ms ?? 12000); // 12s aktywnego okna SAY
@@ -349,6 +384,8 @@ export default function PrompterPage() {
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
     setIsRunning(true);
+    setSilencePause(false);
+    pausedRemainingRef.current = null;
     startCountdown(MAX_TIME);
     setIdx(0);
     setDisplayText(stepsRef.current[0]?.mode === "VERIFY" ? (stepsRef.current[0].target || "") : (stepsRef.current[0]?.prompt || ""));
@@ -362,6 +399,8 @@ export default function PrompterPage() {
     stopSayCaptureWhisper();
     stopAV();
     setLevelPct(0);
+    setSilencePause(false);
+    pausedRemainingRef.current = null;
   };
 
   /* ---- 5) Render ---- */
@@ -381,7 +420,6 @@ export default function PrompterPage() {
     opacity: 0.98,
     minHeight: 30,
     textAlign: "center",
-    // brak tła:
   };
 
   return (
@@ -446,6 +484,35 @@ export default function PrompterPage() {
                 </div>
               )}
             </div>
+
+            {/* ⏸️ Overlay pauzy po 10 s ciszy — JEDYNA przypominajka */}
+            {silencePause && (
+              <div
+                className="overlay"
+                onClick={resumeFromPause}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 24,
+                  textAlign: "center",
+                  background: "rgba(0,0,0,0.35)",
+                  cursor: "pointer",
+                  zIndex: 50
+                }}
+              >
+                <div style={{ maxWidth: 680, lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 18, marginBottom: 14 }}>
+                    Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 600 }}>
+                    Jeśli chcesz kontynuować, dotknij ekranu.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
