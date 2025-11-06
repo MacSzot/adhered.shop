@@ -1,0 +1,38 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Słyszę siebie coraz wyraźniej." },
+    { "mode": "VERIFY", "target": "Mój ton staje się cieplejszy." },
+    { "mode": "VERIFY", "target": "Zaczynam mówić do siebie z troską." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś dla siebie dobry." },
+    { "mode": "SAY", "prompt": "Powiedz, że lubisz swoje tempo." },
+    { "mode": "SAY", "prompt": "Powiedz, że potrafisz o siebie zadbać." },
+
+    { "mode": "VERIFY", "target": "Nie spieszę się, gdy słucham siebie." },
+    { "mode": "VERIFY", "target": "Czuję w sobie wdzięczność." },
+    { "mode": "VERIFY", "target": "Jestem w zgodzie ze swoim rytmem." },
+    { "mode": "SAY", "prompt": "Powiedz, że szanujesz to, ile już zrobiłeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś dumny ze swojej drogi." },
+    { "mode": "SAY", "prompt": "Powiedz, że Twoje starania mają sens." },
+
+    { "mode": "VERIFY", "target": "Z każdym słowem czuję spokój." },
+    { "mode": "VERIFY", "target": "Nie porównuję się, tylko zauważam siebie." },
+    { "mode": "VERIFY", "target": "Szanuję to, kim byłem, i to, kim jestem." },
+    { "mode": "SAY", "prompt": "Powiedz, że potrafisz być dla siebie łagodny." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś komuś potrzebny — także sobie." },
+    { "mode": "SAY", "prompt": "Powiedz, że wierzysz w swoje dobre intencje." },
+
+    { "mode": "VERIFY", "target": "Nie boję się mówić o swoich wartościach." },
+    { "mode": "VERIFY", "target": "Potrafię słyszeć czułość w swoim głosie." },
+    { "mode": "VERIFY", "target": "Mój głos brzmi coraz pewniej." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny sobie za cierpliwość." },
+    { "mode": "SAY", "prompt": "Powiedz, że zasługujesz na spokój." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś kimś, kogo naprawdę lubisz." },
+
+    { "mode": "VERIFY", "target": "Czuję się dobrze w swoim towarzystwie." },
+    { "mode": "VERIFY", "target": "Z każdym oddechem staję się łagodniejszy." },
+    { "mode": "VERIFY", "target": "To, co mówię, ma dla mnie wartość." },
+    { "mode": "SAY", "prompt": "Powiedz, że lubisz to, jak się zmieniasz." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś spokojny, gdy jesteś sobą." },
+    { "mode": "SAY", "prompt": "Powiedz, że szanujesz siebie takiego, jakim jesteś." }
+  ]
+}
