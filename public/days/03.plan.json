@@ -1,89 +1,57 @@
 {
   "steps": [
-    { "mode": "VERIFY", "target": "Dziękuję sobie za swoją odwagę" },
-    { "mode": "VERIFY", "target": "Szacunek do siebie jest rzeczą naturajną." },
-    { "mode": "VERIFY", "target": "Wiem, jak ogromną wnoszę wartość w życia ludzi." },
-    { "mode": "VERIFY", "target": "Dziekuje sobie za swoją odwagę." },
+    { "mode": "VERIFY", "target": "Jestem tutaj." },
+    { "mode": "VERIFY", "target": "Oddycham spokojnie." },
+    { "mode": "VERIFY", "target": "To, co czuję, ma znaczenie." },
+    { "mode": "VERIFY", "target": "Mój głos brzmi dokładnie tak, jak powinien." },
+    { "mode": "VERIFY", "target": "Nie oceniam siebie, tylko słucham." },
+    { "mode": "VERIFY", "target": "Nie muszę niczego poprawiać." },
+    { "mode": "VERIFY", "target": "Każde słowo może być wolniejsze." },
+    { "mode": "VERIFY", "target": "To, co mówię, zostaje we mnie." },
+    { "mode": "VERIFY", "target": "Nie uciekam od swojego dźwięku." },
+    { "mode": "VERIFY", "target": "Słyszę siebie wyraźnie." },
 
-    {
-      "mode": "SAY",
-      "prompt": "A teraz popatrz sobie w oczy i PODZIĘKUJ SOBIE. Zrób to ze spokojem — twoje słowa wyświetlą się na ekranie.",
-      "prep_ms": 2500,
-      "dwell_ms": 12000
-    },
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie szanujesz." },
 
-    { "mode": "VERIFY", "target": "Doceniam to, jak wiele udało mi się przeżyć." },
-    { "mode": "VERIFY", "target": "Wiem, że zawsze jestem w stanie sobie poradzić." },
-    { "mode": "VERIFY", "target": "Poczucie szacunku do siebie napawa mnie dumą." },
+    { "mode": "VERIFY", "target": "To jest dobry moment." },
+    { "mode": "VERIFY", "target": "Nie boję się brzmieć prawdziwie." },
+    { "mode": "VERIFY", "target": "Każdy ton mojego głosu jest częścią mnie." },
+    { "mode": "VERIFY", "target": "Nie potrzebuję zgody, żeby mówić." },
+    { "mode": "VERIFY", "target": "To, co wypowiadam, mnie wzmacnia." },
 
-    {
-      "mode": "SAY",
-      "prompt": "A teraz popatrz na siebie i PRZYZNAJ SOBIE RACJE. Zrób to z przekonaniem — twoje słowa wyświetlą się na ekranie.",
-      "prep_ms": 2500,
-      "dwell_ms": 12000
-    },
+    { "mode": "SAY", "prompt": "Powiedz do siebie coś, co brzmi dumnie." },
 
-    { "mode": "VERIFY", "target": "Każdy dzień przynosi nowe zrozumienie." },
-    { "mode": "VERIFY", "target": "Mam świadomość, że nie wszystko musi być naprawione." },
-    { "mode": "VERIFY", "target": "Szanuje wszystkie swoje złe decyzje." },
+    { "mode": "VERIFY", "target": "Nie uciekam od ciszy." },
+    { "mode": "VERIFY", "target": "Cisza też mówi moim głosem." },
+    { "mode": "VERIFY", "target": "Zasługuję, żeby siebie słyszeć." },
+    { "mode": "VERIFY", "target": "Nie poprawiam swojego tonu." },
+    { "mode": "VERIFY", "target": "Po prostu mówię." },
 
-    {
-      "mode": "SAY",
-      "prompt": "A teraz popatrz na siebie i POGRATULUJ SOBIE. Zrób to z radością — twoje słowa wyświetlą się na ekranie.",
-      "prep_ms": 2500,
-      "dwell_ms": 12000
-    },
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie podziwiasz" },
 
-    { "mode": "VERIFY", "target": "Podziwiam cierpliwość, która pozwala mi dojrzewać." },
-    { "mode": "VERIFY", "target": "Zaczynam rozumieć, że wartość nie zależy od tempa." },
-    { "mode": "VERIFY", "target": "W moim spojrzeniu pojawia się pewność." },
-    { "mode": "VERIFY", "target": "Doceniam odwagę, z jaką uczę się siebie." },
+    { "mode": "VERIFY", "target": "W moim głosie jest spokój." },
+    { "mode": "VERIFY", "target": "Nie potrzebuję być idealny." },
+    { "mode": "VERIFY", "target": "Mam do siebie szacunek." },
+    { "mode": "VERIFY", "target": "Nie boję się usłyszeć siebie." },
+    { "mode": "VERIFY", "target": "To, co mówię, jest moje." },
 
-    {
-      "mode": "SAY",
-      "prompt": "A teraz popatrz sobie w oczy i powiedz, że CZUJESZ DUMĘ. Zrób to z czułością — twoje słowa wyświetlą się na ekranie.",
-      "prep_ms": 2500,
-      "dwell_ms": 12000
-    },
+    { "mode": "SAY", "prompt": "Powiedz, że szanujesz swoje ddecyzje." },
 
-    { "mode": "VERIFY", "target": "Widzę, że moja odwaga to norma." },
-    { "mode": "VERIFY", "target": "Mam w sobie szacunek do przeszłości." },
-    { "mode": "VERIFY", "target": "Mam za co być sobie wdzięczny." },
-    { "mode": "VERIFY", "target": "Doceniam swoje myśli, coraz życzliwsze." },
-    { "mode": "VERIFY", "target": "Zaufanie do siebie rośnie z każdym dniem." },
-    { "mode": "VERIFY", "target": "Wiem, że częściej dostrzegam swoją wartość." },
-    { "mode": "VERIFY", "target": "Podziwiam siebie za konsekwencję." },
-    { "mode": "VERIFY", "target": "Każde doświadczenie czegoś mnie nauczyło." },
-    { "mode": "VERIFY", "target": "W moim tempie dojrzewa zgoda." },
-    { "mode": "VERIFY", "target": "Szanuję proces, w którym się znajduję." },
-    { "mode": "VERIFY", "target": "Nie muszę zawsze wiedzieć, dokąd iść." },
-    { "mode": "VERIFY", "target": "Podziwiam swój spokój, który widzą inni." },
-    { "mode": "VERIFY", "target": "Pozostaję w zgodzie z tym, w co wierzę." },
-    { "mode": "VERIFY", "target": "Wdzięczność staje się moją rutyną." },
-    { "mode": "VERIFY", "target": "Doceniam momenty, w których naprawdę siebie słyszę." },
-    { "mode": "VERIFY", "target": "Cisza potrafi być pełna znaczenia." },
-    { "mode": "VERIFY", "target": "Widzę w sobie wartość, która nie wymaga potwierdzeń." },
-    { "mode": "VERIFY", "target": "Szanuję rytm, który jest tylko mój." },
-    { "mode": "VERIFY", "target": "Wiem, że na wszystko potrzeba czasu." },
-    { "mode": "VERIFY", "target": "Mam świadomość, że mogę być źródłem dobra." },
-    { "mode": "VERIFY", "target": "To, co czuję, jest wystarczająco prawdziwe." },
-    { "mode": "VERIFY", "target": "Podziwiam w sobie spokój, który wraca." },
-    { "mode": "VERIFY", "target": "Każdy dzień przynosi coś, co mogę nazwać swoim." },
-    { "mode": "VERIFY", "target": "Szanuję granice, które dają mi oddech." },
-    { "mode": "VERIFY", "target": "W chwilach wdzięczności czuję bliskość ze sobą." },
-    { "mode": "VERIFY", "target": "Doceniam, że potrafię dbać o siebie mądrzej." },
-    { "mode": "VERIFY", "target": "Uznaję, że rozwój to także odpoczynek." },
-    { "mode": "VERIFY", "target": "Czasem właśnie zatrzymanie staje się postępem." },
-    { "mode": "VERIFY", "target": "Podziwiam siebie za obecność w tym procesie." },
-    { "mode": "VERIFY", "target": "To, że trwam, jest już dowodem siły." },
-    { "mode": "VERIFY", "target": "Szanuję odwagę, która nie potrzebuje aplauzu." },
-    { "mode": "VERIFY", "target": "Codzienność uczy mnie życzliwości." },
-    { "mode": "VERIFY", "target": "Mam świadomość, że jestem częścią czegoś dobrego." },
-    { "mode": "VERIFY", "target": "W ciszy odnajduję równowagę." },
-    { "mode": "VERIFY", "target": "Podziwiam siłę, która nie musi być głośna." },
-    { "mode": "VERIFY", "target": "Moje wnętrze staje się spokojnym miejscem." },
-    { "mode": "VERIFY", "target": "Szanuję ciszę, która przynosi spokój." },
-    { "mode": "VERIFY", "target": "Każdy dzień przybliża mnie do siebie." }
+    { "mode": "VERIFY", "target": "Mój głos mnie prowadzi." },
+    { "mode": "VERIFY", "target": "Nie szukam doskonałości." },
+    { "mode": "VERIFY", "target": "Z każdym słowem staję się spokojniejszy." },
+    { "mode": "VERIFY", "target": "To, co mówię, to nie ćwiczenie, to ja." },
+    { "mode": "VERIFY", "target": "Nie udaję odwagi, po prostu ją wypowiadam." },
+
+    { "mode": "SAY", "prompt": "Powiedz, że sobie ufasz." },
+
+    { "mode": "VERIFY", "target": "Mówię do siebie z szacunkiem." },
+    { "mode": "VERIFY", "target": "Słyszę, jak się zmieniam." },
+    { "mode": "VERIFY", "target": "Ten głos staje się znajomy." },
+    { "mode": "VERIFY", "target": "To ja – obecny i prawdziwy." },
+    { "mode": "VERIFY", "target": "To, co mówię, zostanie ze mną." },
+
+    { "mode": "SAY", "prompt": "Powiedz do siebie, że to dobry moment, żeby być." }
   ]
 }
 
