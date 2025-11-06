@@ -1,28 +1,64 @@
 {
+  "config": {
+    "mic_from_step": 6,
+    "camera": "never"
+  },
   "steps": [
-    { "mode": "VERIFY", "target": "Jestem w bardzo dobrym miejscu." },
-    { "mode": "VERIFY", "target": "Każdego dnia coraz lepiej rozumiem siebie." },
-    { "mode": "VERIFY", "target": "Mam w sobie więcej spokoju niż kiedyś." },
-    {
-      "mode": "SAY",
-      "prompt": "Powiedz teraz do siebie, że się szanujesz. Twoje słowa pojawią się na ekranie.",
-      "prep_ms": 300,
-      "dwell_ms": 12000
-    },
-    {
-      "mode": "SAY",
-      "prompt": "Powiedz coś, co chciałbyś usłyszeć od innych. Twoje słowa pojawią się na ekranie.",
-      "prep_ms": 300,
-      "dwell_ms": 12000
-    },
-    { "mode": "VERIFY", "target": "To, kim jestem, staje się dla mnie coraz bardziej wystarczające." },
-    { "mode": "VERIFY", "target": "Zasługuję na to, by być dla siebie dobry." },
-    {
-      "mode": "SAY",
-      "prompt": "Powiedz teraz do siebie: „Jestem dla siebie ważny.”",
-      "prep_ms": 300,
-      "dwell_ms": 12000
-    }
+    { "mode": "VERIFY", "target": "To pierwszy dzień programu." },
+    { "mode": "VERIFY", "target": "Nie trzeba niczego udowadniać." },
+    { "mode": "VERIFY", "target": "To moment spokojnego rozpoczęcia." },
+    { "mode": "VERIFY", "target": "Oddychaj powoli i skup się na słowach." },
+    { "mode": "VERIFY", "target": "Za chwilę zacznie się część z powtarzaniem." },
+
+    { "mode": "VERIFY", "target": "Mam w sobie spokój." },
+    { "mode": "VERIFY", "target": "Szacunek zaczyna się od uwagi." },
+    { "mode": "VERIFY", "target": "Mam w sobie szacunek." },
+    { "mode": "VERIFY", "target": "To, że jestem tutaj, to dużo." },
+    { "mode": "VERIFY", "target": "To spokojny początek drogi." },
+    { "mode": "VERIFY", "target": "Każdy oddech to chwila równowagi." },
+    { "mode": "VERIFY", "target": "Nie muszę się spieszyć." },
+    { "mode": "VERIFY", "target": "Każde słowo może mnie niesie." },
+    { "mode": "VERIFY", "target": "Cisza też jest częścią ćwiczenia." },
+    { "mode": "VERIFY", "target": "Chcę iść do przodu." },
+    { "mode": "VERIFY", "target": "Uważność to początek szacunku." },
+    { "mode": "VERIFY", "target": "Spokój nie wymaga wysiłku." },
+    { "mode": "VERIFY", "target": "To, co się dzieje, może być proste." },
+    { "mode": "VERIFY", "target": "Każdy krok jest wystarczający." },
+    { "mode": "VERIFY", "target": "Czuję swoją wartość." },
+    { "mode": "VERIFY", "target": "Czuje podziw dla siebie." },
+    { "mode": "VERIFY", "target": "Zatrzymanie jest potrzebne." },
+    { "mode": "VERIFY", "target": "Zatrzymanie nie jest słabością." },
+    { "mode": "VERIFY", "target": "Dziękuję sobie." },
+    { "mode": "VERIFY", "target": "To bezpieczne miejsce." },
+    { "mode": "VERIFY", "target": "Tu można zwolnić." },
+    { "mode": "VERIFY", "target": "Tu można milczeć." },
+    { "mode": "VERIFY", "target": "Tu można się wsłuchać." },
+    { "mode": "VERIFY", "target": "Cisza mówi wystarczająco dużo." },
+    { "mode": "VERIFY", "target": "Każdy głos ma znaczenie." },
+    { "mode": "VERIFY", "target": "Mój głos też ma znaczenie." },
+    { "mode": "VERIFY", "target": "Nie trzeba mówić głośno." },
+    { "mode": "VERIFY", "target": "Wystarczy mówić prawdziwie." },
+    { "mode": "VERIFY", "target": "To spokojne ćwiczenie." },
+    { "mode": "VERIFY", "target": "To chwila na bycie ze sobą." },
+    { "mode": "VERIFY", "target": "To nie test." },
+    { "mode": "VERIFY", "target": "Nie ma błędów w byciu obecnym." },
+    { "mode": "VERIFY", "target": "Każde zdanie to powrót do siebie." },
+    { "mode": "VERIFY", "target": "Nie trzeba się poprawiać." },
+    { "mode": "VERIFY", "target": "Wystarczy słyszeć własny głos." },
+    { "mode": "VERIFY", "target": "Każdy głos jest wystarczający." },
+    { "mode": "VERIFY", "target": "Każda pauza jest ważna." },
+    { "mode": "VERIFY", "target": "To proste, co się dzieje teraz." },
+    { "mode": "VERIFY", "target": "To, że tu jestem, ma znaczenie." },
+    { "mode": "VERIFY", "target": "To wystarczający początek." },
+    { "mode": "VERIFY", "target": "To dzień, który należy do mnie." },
+    { "mode": "VERIFY", "target": "Tu można po prostu oddychać." },
+    { "mode": "VERIFY", "target": "To ćwiczenie ma swój rytm." },
+    { "mode": "VERIFY", "target": "Nie trzeba nic zmieniać." },
+    { "mode": "VERIFY", "target": "To, co jest, wystarczy." },
+    { "mode": "VERIFY", "target": "Dziś chodzi tylko o obecność." },
+    { "mode": "VERIFY", "target": "To koniec pierwszego dnia programu." },
+    { "mode": "VERIFY", "target": "Dziękuję za tę chwilę skupienia." }
   ]
 }
+
 
