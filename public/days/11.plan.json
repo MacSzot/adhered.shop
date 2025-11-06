@@ -1,0 +1,36 @@
+{
+  "steps": [
+    { "mode": "SAY", "prompt": "Powiedz, że bardzo się szanujesz." },
+    { "mode": "SAY", "prompt": "Powiedz, że naprawdę się lubisz." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś z siebie dumny." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś dla siebie dobry." },
+    { "mode": "SAY", "prompt": "Powiedz, że potrafisz być dla siebie czuły." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś spokojny, kiedy mówisz do siebie." },
+    { "mode": "SAY", "prompt": "Powiedz, że bardzo się kochasz." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wart wszystkiego, co dobre." },
+    { "mode": "SAY", "prompt": "Powiedz, że zasługujesz na szacunek." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś dla siebie ważny." },
+
+    { "mode": "SAY", "prompt": "Powiedz, że akceptujesz całego siebie." },
+    { "mode": "SAY", "prompt": "Powiedz, że lubisz swoje myśli i emocje." },
+    { "mode": "SAY", "prompt": "Powiedz, że potrafisz sobie ufać." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny sobie za to, że wytrwałeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś spokojny w swojej obecności." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz do siebie ciepło." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz dumę z tego, jak mówisz do siebie teraz." },
+    { "mode": "SAY", "prompt": "Powiedz, że lubisz swoje imię, kiedy je wypowiadasz." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz do siebie wdzięczność." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś z siebie naprawdę zadowolony." },
+
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz, że jesteś u siebie." },
+    { "mode": "SAY", "prompt": "Powiedz, że lubisz ten moment." },
+    { "mode": "SAY", "prompt": "Powiedz, że niczego już nie musisz udowadniać." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś sobą i to Ci wystarcza." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny sobie za wszystko, co przeszedłeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że wierzysz w siebie." },
+    { "mode": "SAY", "prompt": "Powiedz, że szanujesz swoją historię." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz dumę, kiedy mówisz te słowa." },
+    { "mode": "SAY", "prompt": "Powiedz, że chcesz sobie dobrze życzyć." },
+    { "mode": "SAY", "prompt": "Powiedz, że naprawdę się kochasz." }
+  ]
+}
