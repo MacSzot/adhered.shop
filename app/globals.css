@@ -24,6 +24,35 @@ html,body{
 }
 .topbar--dense{padding:12px 14px}
 
+/* --- NOWE: wyższy panel + dwie linie po lewej, pionowe przyciski po prawej --- */
+.topbar--tall{
+  min-height:110px;                /* panel wyższy */
+  align-items:flex-start;
+  padding-bottom:12px;
+}
+.top-sides{                        /* kontener L/R */
+  display:flex; align-items:flex-start; justify-content:space-between;
+  width:100%;
+}
+.top-left{
+  display:flex; flex-direction:column; gap:6px;
+  padding-top:4px;
+}
+.top-left .line{ font-size:15px; }
+.top-left .line b{ font-weight:800; }
+
+.controls-vert{
+  display:flex; flex-direction:column; gap:8px;
+}
+.btn-ghost{
+  background:rgba(255,255,255,.1);
+  color:#fff; border:1px solid rgba(255,255,255,.18);
+  border-radius:12px; padding:10px 14px; font-size:14px;
+  backdrop-filter: blur(6px);
+}
+.btn-ghost:active{ transform:translateY(1px); }
+
+/* stare elementy topu (pozostają do zgodności) */
 .tabs{display:flex;gap:10px;align-items:center}
 .tab{
   padding:8px 12px;border-radius:999px;border:1px solid #333;
@@ -47,10 +76,10 @@ html,body{
 /* --- TIMER --- */
 .timer-top {
   position: fixed;
-  top: 70px; /* przeniesiony niżej pod topbar */
+  top: 88px; /* niżej pod wyższy topbar */
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10; /* mniejszy niż topbar, więc będzie POD nim */
+  z-index: 10; /* pod topbar */
   font-weight: 800;
   letter-spacing: .5px;
 }
@@ -64,7 +93,6 @@ html,body{
     0 0 40px rgba(0, 0, 0, .5),
     0 0 2px rgba(0, 0, 0, 1);
 }
-
 
 /* --- KAMERA --- */
 .stage{
@@ -138,7 +166,7 @@ html,body{
 /* =  DODANE USTALENIA UI  = */
 /* ========================= */
 
-/* [1] Ukryj „Prompter / Rysownik” – zostaw tylko info o użytkowniku i dniu */
+/* [1] Ukryj „Prompter / Rysownik” */
 .tabs{ display:none !important; }
 
 /* [2] Ukryj natywny overlay „play” na video i dodaj nasz START nisko */
@@ -152,11 +180,11 @@ html,body{
   box-shadow:0 4px 16px rgba(0,0,0,.35);
 }
 
-/* [3] Przypominajka o braku reakcji – przenieś niżej (nie na środku) */
+/* [3] Przypominajka o braku reakcji – pod spodem */
 .pause-overlay{
   position:absolute; inset:0; z-index:60;
   display:flex; align-items:flex-end; justify-content:center;
-  padding:0 20px 14vh;             /* od dołu – można korygować */
+  padding:0 20px 14vh;
   background:rgba(0,0,0,.35);
   text-align:center;
 }
