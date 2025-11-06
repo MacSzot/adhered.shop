@@ -323,6 +323,9 @@ export default function PrompterPage() {
   }
 
   /* ---- 4) Web Speech (desktop) ---- */
+  const SR_CTOR = getSpeechRecognitionCtor();
+  const speechRecRef = useRef<InstanceType<typeof SR_CTOR> | null>(null);
+
   function startWebSpeech() {
     const SR = SR_CTOR;
     if (!SR) return;
@@ -450,7 +453,18 @@ export default function PrompterPage() {
 
     if (s.mode === "VERIFY") {
       setDisplayText(s.target || "");
-      // Zielony/next odpala się po pierwszym głosie (gdy mic jest aktywny)
+
+      // ✅ Auto-advance po 5s, jeśli mikrofon NIE jest aktywny (np. intro kroki 0–4 Dnia 1)
+      if (!audioActiveRef.current) {
+        verifyNextTimerRef.current = window.setTimeout(() => {
+          setFlashGreen(false); // brak zielonego w intro
+          gotoNext(i);
+        }, VERIFY_NEXT_AT);
+        return; // nic więcej nie robimy
+      }
+
+      // ✅ Gdy mikrofon jest aktywny – czekamy na głos i wtedy włączamy zielony i przejście
+      // (obsługiwane w onFirstVoiceHeard)
     } else {
       setDisplayText(s.prompt || "");
       sayGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), prep + SAY_GREEN_AT);
@@ -579,7 +593,6 @@ export default function PrompterPage() {
       <div className="timer-top timer-top--strong" style={{ textAlign: "center" }}>{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
-        {/* Dzień 1 nie używa wideo, więc videoRef pozostanie puste; Dni 2+ pokażą kamerę */}
         <video ref={videoRef} autoPlay playsInline muted className={`cam ${!hasStream ? "video-hidden" : ""}`} />
 
         {/* START */}
