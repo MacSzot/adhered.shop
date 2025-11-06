@@ -1,0 +1,45 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Jestem w tym momencie całkowicie obecny." },
+    { "mode": "VERIFY", "target": "Nie poprawiam swojego głosu, pozwalam mu brzmieć." },
+    { "mode": "VERIFY", "target": "Każde zdanie jest naturalnym oddechem." },
+    { "mode": "VERIFY", "target": "Nie analizuję – po prostu mówię." },
+    { "mode": "VERIFY", "target": "Nie muszę być gotowy, żeby być prawdziwy." },
+
+    { "mode": "SAY", "prompt": "Powiedz, co najbardziej doceniasz w sobie dziś." },
+    { "mode": "SAY", "prompt": "Powiedz jedno zdanie, którego naprawdę potrzebujesz." },
+
+    { "mode": "VERIFY", "target": "Nie przyspieszam, pozwalam słowom dojrzewać." },
+    { "mode": "VERIFY", "target": "Słyszę w swoim głosie siłę, nawet jeśli jest cicha." },
+    { "mode": "VERIFY", "target": "Każde wypowiedziane słowo zostaje ze mną." },
+    { "mode": "VERIFY", "target": "Mój ton nie musi być idealny, żeby być szczery." },
+
+    { "mode": "SAY", "prompt": "Powiedz coś, co chciałbyś usłyszeć od kogoś bliskiego." },
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie podziwiasz." },
+
+    { "mode": "VERIFY", "target": "Mój głos jest jak odbicie mojego wnętrza." },
+    { "mode": "VERIFY", "target": "Każde słowo, które wypowiadam, jest prawdziwe." },
+    { "mode": "VERIFY", "target": "Nie muszę niczego udowadniać – jestem wystarczający." },
+    { "mode": "VERIFY", "target": "Mówię powoli, z szacunkiem do siebie." },
+    { "mode": "VERIFY", "target": "Cisza pomiędzy słowami też mnie uczy." },
+
+    { "mode": "SAY", "prompt": "Powiedz, co w sobie cenisz" },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś gotowy na wyzwania." },
+
+    { "mode": "VERIFY", "target": "Nie boję się ciszy po swoich słowach." },
+    { "mode": "VERIFY", "target": "Cisza też jest częścią rozmowy ze sobą." },
+    { "mode": "VERIFY", "target": "Nie oceniam swojego tonu – tylko go słucham." },
+    { "mode": "VERIFY", "target": "Mój głos uczy mnie obecności." },
+
+    { "mode": "SAY", "prompt": "Powiedz, jak bardzo siebie cenisz." },
+    { "mode": "SAY", "prompt": "Powiedz, jaką czujesz z siebie dumę." },
+
+    { "mode": "VERIFY", "target": "Nie szukam potwierdzenia w innych." },
+    { "mode": "VERIFY", "target": "Moje słowa wystarczą mi, żeby być spokojnym." },
+    { "mode": "VERIFY", "target": "Nie udaję spokoju – po prostu go wypowiadam." },
+    { "mode": "VERIFY", "target": "To, co mówię, ma sens, nawet jeśli jest proste." },
+
+    { "mode": "SAY", "prompt": "Powiedz, co chcesz dziś usłyszeć od samego siebie." },
+    { "mode": "SAY", "prompt": "Powiedz, jak bardzo siebie szanujesz." }
+  ]
+}
