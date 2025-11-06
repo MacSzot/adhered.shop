@@ -133,3 +133,33 @@ html,body{
   .meter-vertical{right:10px;width:8px}
   .center-text{max-width:90%}
 }
+
+/* ========================= */
+/* =  DODANE USTALENIA UI  = */
+/* ========================= */
+
+/* [1] Ukryj „Prompter / Rysownik” – zostaw tylko info o użytkowniku i dniu */
+.tabs{ display:none !important; }
+
+/* [2] Ukryj natywny overlay „play” na video i dodaj nasz START nisko */
+.video-hidden{ opacity:0 !important; pointer-events:none !important; }
+.start-floating{
+  position:absolute; left:50%; transform:translateX(-50%);
+  bottom:14vh; z-index:50;
+  background:#ffffff; color:#000; font-weight:800;
+  padding:14px 24px; border-radius:999px; border:none;
+  font-size:18px;
+  box-shadow:0 4px 16px rgba(0,0,0,.35);
+}
+
+/* [3] Przypominajka o braku reakcji – przenieś niżej (nie na środku) */
+.pause-overlay{
+  position:absolute; inset:0; z-index:60;
+  display:flex; align-items:flex-end; justify-content:center;
+  padding:0 20px 14vh;             /* od dołu – można korygować */
+  background:rgba(0,0,0,.35);
+  text-align:center;
+}
+.pause-card{ max-width:680px; color:#fff; line-height:1.45; }
+.pause-card .l1{ font-size:16px; opacity:.85; margin-bottom:10px; }
+.pause-card .l2{ font-size:18px; font-weight:700; }
