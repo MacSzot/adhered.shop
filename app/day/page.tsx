@@ -58,7 +58,7 @@ function isIOSSafari(): boolean {
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Ustawienia stałe
+  // Ustawienia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
   const dayFileParam = dayRaw.padStart(2, "0");
@@ -66,19 +66,20 @@ export default function PrompterPage() {
     const n = parseInt(dayRaw, 10);
     return Number.isNaN(n) ? dayRaw : String(n);
   })();
+  const isDayOne = dayFileParam === "01";
 
-  // Timingi (uzgodnione)
-  const MAX_TIME = 6 * 60;
-  const VERIFY_GREEN_AT = 4000;   // po 4s od pierwszego głosu
-  const VERIFY_NEXT_AT = 5000;    // po 5s (flash 1s)
-  const SAY_LIMIT_TOTAL = 12000;  // twarde 12s
-  const SAY_GREEN_AT = 11000;     // 11s → 1s flash
-  const SILENCE_TIMEOUT = 10000;  // 10s ciszy → overlay
+  // Timingi
+  const MAX_TIME = 6 * 60;       // 6:00
+  const VERIFY_GREEN_AT = 4000;  // po 4s od pierwszego głosu
+  const VERIFY_NEXT_AT = 5000;   // po 5s (flash 1s)
+  const SAY_LIMIT_TOTAL = 12000; // 12s
+  const SAY_GREEN_AT = 11000;    // 11s → 1s flash
+  const SILENCE_TIMEOUT = 10000; // 10s ciszy
 
   // Progi VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
 
-  // Stany UI
+  // Stan UI
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
@@ -94,7 +95,7 @@ export default function PrompterPage() {
   const [flashGreen, setFlashGreen] = useState(false);
   const [silencePause, setSilencePause] = useState(false);
 
-  // Refs aktualnych wartości
+  // Refs
   const isRunningRef = useRef(isRunning);
   const idxRef = useRef(idx);
   const stepsRef = useRef<PlanStep[]>([]);
@@ -105,7 +106,6 @@ export default function PrompterPage() {
   // Zegar sesji
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
-
   function startCountdown(seconds: number) {
     stopCountdown();
     endAtRef.current = Date.now() + seconds * 1000;
@@ -132,21 +132,28 @@ export default function PrompterPage() {
   const sayNextTimerRef = useRef<number | null>(null);
   const prepTimerRef = useRef<number | null>(null);
 
-  // Audio/Video
+  function clearStepTimers() {
+    [verifyGreenTimerRef, verifyNextTimerRef, sayGreenTimerRef, sayNextTimerRef, prepTimerRef].forEach(r => {
+      if (r.current) { clearTimeout(r.current!); r.current = null; }
+    });
+  }
+
+  // AV / VAD
   const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioActiveRef = useRef(false); // ✅ tylko gdy mamy mikrofon
 
   const speakingFramesRef = useRef(0);
   const heardThisStepRef = useRef(false);
   const lastVoiceAtRef = useRef<number>(Date.now());
 
-  // Web Speech (desktop/Android-Chrome)
+  // Web Speech (desktop)
   const SR_CTOR = getSpeechRecognitionCtor();
   const speechRecRef = useRef<InstanceType<typeof SR_CTOR> | null>(null);
 
-  // Whisper fallback (mobile / iOS)
+  // Whisper (mobile)
   const mrRef = useRef<MediaRecorder | null>(null);
   const mrIntervalRef = useRef<number | null>(null);
 
@@ -161,6 +168,7 @@ export default function PrompterPage() {
         setSteps(steps);
         setIdx(0);
         setDisplayText(steps[0]?.mode === "VERIFY" ? (steps[0].target || "") : (steps[0]?.prompt || ""));
+        // eslint-disable-next-line no-console
         console.log(`[DAY ${dayFileParam}] source:`, source, `steps: ${steps.length}`);
       } catch (e) {
         console.error(e);
@@ -173,26 +181,27 @@ export default function PrompterPage() {
   }, []);
 
   /* ---- 2) Start/Stop AV + VAD ---- */
-  async function startAV(): Promise<boolean> {
+  async function startAV(opts?: { audioOnly?: boolean }) {
     setMicError(null);
     speakingFramesRef.current = 0;
     lastVoiceAtRef.current = Date.now();
 
+    const wantAudioOnly = !!opts?.audioOnly;
+
     try {
       if (!streamRef.current) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: 1,
-          },
-        });
+        const constraints: MediaStreamConstraints = wantAudioOnly
+          ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false }
+          : {
+              audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+              video: true,
+            };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         streamRef.current = stream;
-        if (videoRef.current) (videoRef.current as any).srcObject = stream;
+        if (!wantAudioOnly && videoRef.current) (videoRef.current as any).srcObject = stream;
       }
-      setHasStream(true);
+      setHasStream(!wantAudioOnly); // kamera widoczna tylko gdy wideo
+      audioActiveRef.current = true;
 
       if (!audioCtxRef.current) {
         const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
@@ -207,7 +216,7 @@ export default function PrompterPage() {
 
         const analyser = ac.createAnalyser();
         analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.75; // responsywniej
+        analyser.smoothingTimeConstant = 0.75;
         ac.createMediaStreamSource(streamRef.current!).connect(analyser);
         analyserRef.current = analyser;
 
@@ -231,7 +240,7 @@ export default function PrompterPage() {
           const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
           const now = Date.now();
 
-          if (isRunningRef.current) {
+          if (isRunningRef.current && audioActiveRef.current) {
             if (speakingNow) {
               speakingFramesRef.current += 1;
               if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
@@ -258,7 +267,7 @@ export default function PrompterPage() {
       return true;
     } catch (err: any) {
       console.error("getUserMedia error:", err);
-      setMicError(err?.name === "NotAllowedError" ? "Brak zgody na mikrofon/kamerę." : "Nie udało się uruchomić mikrofonu/kamery.");
+      setMicError(err?.name === "NotAllowedError" ? "Brak zgody na mikrofon." : "Nie udało się uruchomić mikrofonu/kamery.");
       return false;
     }
   }
@@ -273,6 +282,7 @@ export default function PrompterPage() {
       try { audioCtxRef.current.close(); } catch {}
       audioCtxRef.current = null;
     }
+    audioActiveRef.current = false;
     setHasStream(false);
   }
 
@@ -316,13 +326,7 @@ export default function PrompterPage() {
     lastVoiceAtRef.current = Date.now();
   }
 
-  function clearStepTimers() {
-    [verifyGreenTimerRef, verifyNextTimerRef, sayGreenTimerRef, sayNextTimerRef, prepTimerRef].forEach(r => {
-      if (r.current) { clearTimeout(r.current); r.current = null; }
-    });
-  }
-
-  /* ---- 4) SAY: Desktop=Web Speech, Mobile=Whisper (iOS: mp4 + kickstart) ---- */
+  /* ---- 4) Web Speech (desktop) ---- */
   function startWebSpeech() {
     const SR = SR_CTOR;
     if (!SR) return;
@@ -356,15 +360,17 @@ export default function PrompterPage() {
     }
   }
 
+  /* ---- 5) Whisper (mobile) ---- */
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const mrIntervalRef = useRef<number | null>(null);
   function startWhisperRecorder() {
     if (typeof MediaRecorder === "undefined") {
-      console.warn("Brak MediaRecorder na tej platformie.");
+      console.warn("Brak MediaRecorder.");
       return;
     }
     const stream = streamRef.current;
     if (!stream) return;
 
-    // iOS Safari: prefer mp4; Android: webm zwykle OK, ale mp4 jest stabilniejsze na mobile
     const preferMp4 = isIOSSafari();
     const mp4Ok = MediaRecorder.isTypeSupported("audio/mp4");
     const webmOk = MediaRecorder.isTypeSupported("audio/webm;codecs=opus");
@@ -378,35 +384,22 @@ export default function PrompterPage() {
       return;
     }
 
-    const mr = new MediaRecorder(stream, {
-      mimeType: mime,
-      audioBitsPerSecond: 128_000, // wyżej = stabilniejsze kontenery na iOS
-    });
+    const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 128_000 });
     mrRef.current = mr;
 
-    mr.onstart = () => {
-      // iOS potrafi nie emitować chunków bez „kopniaka”
-      try { mr.requestData(); } catch {}
-    };
+    mr.onstart = () => { try { mr.requestData(); } catch {} };
 
     mr.ondataavailable = async (e) => {
-      if (!e.data || e.data.size < 1024) return; // pomiń puste/za małe porcje
-
+      if (!e.data || e.data.size < 1024) return;
       const fd = new FormData();
       const filename = mime.includes("mp4") ? "chunk.m4a" : "chunk.webm";
       fd.append("audio", e.data, filename);
 
-      // timeout 4s — nie wisi
       const ctrl = new AbortController();
       const to = window.setTimeout(() => ctrl.abort(), 4000);
 
       try {
-        const resp = await fetch("/api/whisper", {
-          method: "POST",
-          body: fd,
-          signal: ctrl.signal,
-          cache: "no-store",
-        });
+        const resp = await fetch("/api/whisper", { method: "POST", body: fd, signal: ctrl.signal, cache: "no-store" });
         window.clearTimeout(to);
         if (!resp.ok) return;
         const json = await resp.json();
@@ -415,14 +408,13 @@ export default function PrompterPage() {
             const next = (prev ? prev + " " : "") + String(json.text || "").trim();
             return next.trim();
           });
-          lastVoiceAtRef.current = Date.now(); // odśwież aktywność
+          lastVoiceAtRef.current = Date.now();
         }
       } catch {
         window.clearTimeout(to);
       }
     };
 
-    // Start i wymuszanie małych porcji
     try { mr.start(600); } catch { try { mr.start(); } catch {} }
     if (mrIntervalRef.current) clearInterval(mrIntervalRef.current);
     mrIntervalRef.current = window.setInterval(() => {
@@ -436,18 +428,25 @@ export default function PrompterPage() {
     if (mrRef.current) { try { mrRef.current.stop(); } catch {} mrRef.current = null; }
   }
 
-  /* ---- 5) Kroki ---- */
+  /* ---- 6) Kroki ---- */
   function runStep(i: number) {
     clearStepTimers();
     setFlashGreen(false);
-    setSayTranscript(""); // 🧹 czyść słowa użytkownika przy każdym kroku
+    setSayTranscript("");
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
-    lastVoiceAtRef.current = Date.now();
 
-    // Zatrzymaj rozpoznawanie na wszelki wypadek
-    stopWebSpeech();
-    stopWhisperRecorder();
+    // Dzień 1: mikrofon dopiero od kroku 6 (po 5 intro + komunikacie)
+    // Kamera w Dniu 1 NIGDY (audioOnly).
+    if (isDayOne) {
+      const needMicNow = i >= 6; // 0..4 intro, 5 komunikat, 6+ powtarzanie
+      if (needMicNow && !audioActiveRef.current) {
+        // prosimy o mikrofon dopiero teraz
+        startAV({ audioOnly: true }).then(() => {
+          lastVoiceAtRef.current = Date.now();
+        });
+      }
+    }
 
     const s = stepsRef.current[i];
     if (!s) return;
@@ -456,17 +455,13 @@ export default function PrompterPage() {
 
     if (s.mode === "VERIFY") {
       setDisplayText(s.target || "");
-      // timery 4s/5s odpalą się przy pierwszym głosie (onFirstVoiceHeard)
+      // Zielony/next odpala się po pierwszym głosie (gdy mic jest aktywny)
     } else {
       setDisplayText(s.prompt || "");
-
       sayGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), prep + SAY_GREEN_AT);
-      sayNextTimerRef.current  = window.setTimeout(() => {
-        setFlashGreen(false);
-        gotoNext(i);
-      }, prep + SAY_LIMIT_TOTAL);
+      sayNextTimerRef.current  = window.setTimeout(() => { setFlashGreen(false); gotoNext(i); }, prep + SAY_LIMIT_TOTAL);
 
-      // Desktop: Web Speech; Mobile (iOS/Android): Whisper
+      // Rozpoznawanie: desktop → Web Speech; mobile → Whisper
       const useMobile = isMobileUA();
       if (!useMobile && SR_CTOR) {
         prepTimerRef.current = window.setTimeout(() => startWebSpeech(), Math.max(0, prep));
@@ -481,7 +476,7 @@ export default function PrompterPage() {
     setFlashGreen(false);
     stopWebSpeech();
     stopWhisperRecorder();
-    setSayTranscript(""); // znika razem z komendą
+    setSayTranscript("");
 
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
@@ -490,13 +485,17 @@ export default function PrompterPage() {
     runStep(next);
   }
 
-  /* ---- 6) Start/Stop ---- */
+  /* ---- 7) Start/Stop ---- */
   const startSession = async () => {
     if (!stepsRef.current.length) return;
-    const ok = await startAV();
-    if (!ok) { setIsRunning(false); return; }
 
-    // prewarm whisper (żeby iOS nie miał „zimnego startu”)
+    // Dzień 1: start bez AV. Dni 2+: od razu audio+video.
+    if (!isDayOne) {
+      const ok = await startAV({ audioOnly: false });
+      if (!ok) { setIsRunning(false); return; }
+    }
+
+    // pre-warm whisper (żeby pierwsza paczka nie była zimnym startem)
     try { await fetch("/api/whisper", { cache: "no-store" }); } catch {}
 
     setIsRunning(true);
@@ -524,7 +523,7 @@ export default function PrompterPage() {
     setRemaining(MAX_TIME);
   };
 
-  /* ---- 7) Render ---- */
+  /* ---- 8) Render ---- */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   const questionStyle: React.CSSProperties = {
@@ -585,6 +584,7 @@ export default function PrompterPage() {
       <div className="timer-top timer-top--strong" style={{ textAlign: "center" }}>{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
+        {/* Dzień 1 nie używa wideo, więc videoRef pozostanie puste; Dni 2+ pokażą kamerę */}
         <video ref={videoRef} autoPlay playsInline muted className={`cam ${!hasStream ? "video-hidden" : ""}`} />
 
         {/* START */}
@@ -594,11 +594,11 @@ export default function PrompterPage() {
               <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6, margin: "0 auto" }}>
                 <p style={{ fontSize: 15.5, opacity: 0.92 }}>
                   Twoja sesja potrwa około <b>6 minut</b>.<br />
-                  Prosimy o powtarzanie na głos wyświetlanych treści.
+                  Prosimy o powtarzanie na głos wyświetlanych treści, gdy o to poprosimy.
                 </p>
                 {micError && (
                   <p style={{ marginTop: 12, color: "#ffb3b3", fontSize: 14 }}>
-                    {micError} — sprawdź dostęp do mikrofonu i kamery.
+                    {micError} — sprawdź dostęp do mikrofonu.
                   </p>
                 )}
               </div>
@@ -624,7 +624,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* Pauza po 10 s ciszy – na dole; TAP = NEXT */}
+        {/* Pauza po 10 s ciszy – aktywna tylko, gdy mic jest włączony */}
         {silencePause && (
           <div
             className="pause-overlay"
