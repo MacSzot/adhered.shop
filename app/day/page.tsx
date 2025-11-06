@@ -1,9 +1,9 @@
+// app/day/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import "../globals.css";
 
-/* Typ planu */
+/* =============== PLAN DNIA =============== */
 type PlanStep = {
   mode: "VERIFY" | "SAY";
   target?: string;
@@ -11,12 +11,11 @@ type PlanStep = {
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
-  prep_ms?: number;
-  dwell_ms?: number;
+  prep_ms?: number;   // opóźnienie przed startem nagrywania
+  dwell_ms?: number;  // długość okna SAY
   note?: string;
 };
 
-/* Ładowanie planu dnia */
 async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
   try {
     const r = await fetch(`/days/${dayFileParam}.plan.json`, { cache: "no-store" });
@@ -30,29 +29,36 @@ async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" 
   if (!r2.ok) throw new Error(`Brak pliku dnia: ${dayFileParam}.plan.json i ${dayFileParam}.txt`);
   const txt = await r2.text();
   const steps: PlanStep[] = txt
-    .split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean)
     .map(line => ({ mode: "VERIFY" as const, target: line }));
   return { source: "txt", steps };
 }
 
+/* =============== HELPERS =============== */
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
 
+/* =============== PAGE =============== */
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Ustawienia UI
-  const USER_NAME = "Magda";
-  const dayRaw = typeof window !== "undefined" ? getParam("day", "1") : "1";
-  const dayFileParam = dayRaw.toString().padStart(2, "0");
-  const DAY_LABEL = dayRaw.toString();
+  // Ustawienia
+  const USER_NAME = "demo";
+  const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
+  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
+  const DAY_LABEL = (() => {
+    const n = parseInt(dayRaw, 10);
+    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
+  })();
 
   const MAX_TIME = 6 * 60; // 6 minut
 
-  // Audio/VAD progi
+  // Progi/czasy VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
 
   // Stany
@@ -64,12 +70,14 @@ export default function PrompterPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
   const [levelPct, setLevelPct] = useState(0);
+  const [mirror] = useState(true);
   const [micError, setMicError] = useState<string | null>(null);
 
+  // ⏸️ Pauza ciszy: jedyna przypominajka po 10 s + ile zostało sekund
   const [silencePause, setSilencePause] = useState(false);
   const pausedRemainingRef = useRef<number | null>(null);
 
-  // Refy bieżące
+  // Refy aktualnych wartości
   const isRunningRef = useRef(isRunning);
   const idxRef = useRef(idx);
   const stepsRef = useRef<PlanStep[]>([]);
@@ -77,9 +85,10 @@ export default function PrompterPage() {
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
 
-  // Timer sesji
+  // ===== TIMER SESJI =====
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
+
   function startCountdown(seconds: number) {
     stopCountdown();
     endAtRef.current = Date.now() + seconds * 1000;
@@ -92,7 +101,10 @@ export default function PrompterPage() {
     }, 250);
   }
   function stopCountdown() {
-    if (countdownIdRef.current) { window.clearInterval(countdownIdRef.current); countdownIdRef.current = null; }
+    if (countdownIdRef.current) {
+      window.clearInterval(countdownIdRef.current);
+      countdownIdRef.current = null;
+    }
     endAtRef.current = null;
   }
 
@@ -109,13 +121,14 @@ export default function PrompterPage() {
   const heardThisStepRef = useRef(false);
   const speakingFramesRef = useRef(0);
 
-  // Whisper chunking
+  // Whisper recorder
   const recRef = useRef<MediaRecorder | null>(null);
   const chunkTimerRef = useRef<number | null>(null);
 
+  // znacznik ostatniego realnego głosu (dla pauzy po 10 s)
   const lastVoiceAtRef = useRef<number>(Date.now());
 
-  /* 1) Wczytaj plan */
+  /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
     (async () => {
       try {
@@ -123,6 +136,7 @@ export default function PrompterPage() {
         setSteps(steps);
         setIdx(0);
         setDisplayText(steps[0]?.mode === "VERIFY" ? (steps[0].target || "") : (steps[0]?.prompt || ""));
+        // eslint-disable-next-line no-console
         console.log(`[DAY ${dayFileParam}] source:`, source, `steps: ${steps.length}`);
       } catch (e) {
         console.error(e);
@@ -134,7 +148,7 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 2) Start/Stop AV + VU + watchdog ciszy */
+  /* ---- 2) Start/Stop AV + VU + watchdog ciszy ---- */
   async function startAV(): Promise<boolean> {
     stopAV();
     setMicError(null);
@@ -192,13 +206,13 @@ export default function PrompterPage() {
           speakingFramesRef.current += 1;
           if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
             heardThisStepRef.current = true;
-            lastVoiceAtRef.current = Date.now();
+            lastVoiceAtRef.current = Date.now(); // ⏱️ rejestrujemy mowę
           }
         } else {
           speakingFramesRef.current = 0;
         }
 
-        // Jedyna przypominajka po 10 s ciszy
+        // ---- JEDYNA PRZYPOMINAJKA po 10 s rzeczywistej ciszy ----
         if (isRunningRef.current && !silencePause) {
           const now = Date.now();
           if (now - lastVoiceAtRef.current >= 10_000) {
@@ -207,8 +221,12 @@ export default function PrompterPage() {
               secsLeft = Math.max(0, Math.ceil((endAtRef.current - now) / 1000));
             }
             pausedRemainingRef.current = secsLeft;
+
+            // zatrzymujemy licznik (NIE resetujemy do 6:00)
             stopCountdown();
             setRemaining(secsLeft);
+
+            // włączamy pauzę i czekamy na tapnięcie
             setSilencePause(true);
           }
         }
@@ -229,20 +247,25 @@ export default function PrompterPage() {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
-    if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch {} audioCtxRef.current = null; }
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch {}
+      audioCtxRef.current = null;
+    }
   }
 
+  // 👉 wznowienie po tapnięciu w overlay pauzy
   function resumeFromPause() {
     if (!silencePause) return;
     const secs = pausedRemainingRef.current ?? remaining;
-    startCountdown(secs);
+    startCountdown(secs);        // wznawiamy od miejsca przerwania
     setSilencePause(false);
-    lastVoiceAtRef.current = Date.now();
+    lastVoiceAtRef.current = Date.now(); // wyzeruj „ciszę”, żeby nie złapać od razu kolejnej pauzy
   }
 
-  /* 3) Whisper chunkowanie */
+  /* ===== WHISPER: start/stop ===== */
   async function startSayCaptureWhisper() {
     setSayTranscript("");
+
     const stream = streamRef.current;
     if (!stream) return;
 
@@ -251,22 +274,31 @@ export default function PrompterPage() {
       : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
           ? "audio/webm;codecs=opus"
           : "");
-    if (!mime) { console.warn("MediaRecorder: brak wspieranego MIME."); return; }
 
-    const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64_000 });
+    if (!mime) {
+      console.warn("MediaRecorder: brak wspieranego MIME.");
+      return;
+    }
+
+    const mr = new MediaRecorder(stream, {
+      mimeType: mime,
+      audioBitsPerSecond: 64_000,
+    });
     recRef.current = mr;
 
     mr.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
+
       const fd = new FormData();
       const filename = mime.includes("mp4") ? "chunk.m4a" : "chunk.webm";
       fd.append("audio", e.data, filename);
+
       try {
         const resp = await fetch("/api/whisper", { method: "POST", body: fd });
         const json = await resp.json();
         if (json?.text) {
-          setSayTranscript((p) => (p ? p + " " : "") + json.text);
-          lastVoiceAtRef.current = Date.now();
+          setSayTranscript((prev) => (prev ? prev + " " : "") + json.text);
+          lastVoiceAtRef.current = Date.now(); // ruch głosu z serwera
         } else if (json?.error) {
           console.warn("Whisper API error:", json.error);
         }
@@ -275,6 +307,7 @@ export default function PrompterPage() {
       }
     };
 
+    // preferowany tryb — chunk co ~2 sekundy
     try {
       mr.start(2000);
     } catch {
@@ -289,10 +322,13 @@ export default function PrompterPage() {
 
   function stopSayCaptureWhisper() {
     if (chunkTimerRef.current) { clearInterval(chunkTimerRef.current); chunkTimerRef.current = null; }
-    if (recRef.current) { try { recRef.current.stop(); } catch {} recRef.current = null; }
+    if (recRef.current) {
+      try { recRef.current.stop(); } catch {}
+      recRef.current = null;
+    }
   }
 
-  /* 4) Kroki */
+  /* ---- 3) Kroki ---- */
   function clearStepTimers() {
     if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
     if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
@@ -300,7 +336,8 @@ export default function PrompterPage() {
 
   function runStep(i: number) {
     if (!stepsRef.current.length) return;
-    const s = stepsRef.current[i]; if (!s) return;
+    const s = stepsRef.current[i];
+    if (!s) return;
 
     clearStepTimers();
     heardThisStepRef.current = false;
@@ -309,9 +346,10 @@ export default function PrompterPage() {
     if (s.mode === "VERIFY") {
       stopSayCaptureWhisper();
       setDisplayText(s.target || "");
+      // (opcjonalne auto-next po mowie możesz tu dodać, ale nic nie zmieniamy)
     } else {
-      const prep = Number(s.prep_ms ?? 200);
-      const dwell = Number(s.dwell_ms ?? 12000);
+      const prep = Number(s.prep_ms ?? 200);     // szybki start
+      const dwell = Number(s.dwell_ms ?? 12000); // 12s aktywnego okna SAY
 
       stopSayCaptureWhisper();
       setDisplayText(s.prompt || "");
@@ -340,7 +378,7 @@ export default function PrompterPage() {
     runStep(next);
   }
 
-  /* 5) Start/Stop sesji */
+  /* ---- 4) Start/Stop sesji ---- */
   const startSession = async () => {
     if (!stepsRef.current.length) return;
     const ok = await startAV();
@@ -353,6 +391,7 @@ export default function PrompterPage() {
     setDisplayText(stepsRef.current[0]?.mode === "VERIFY" ? (stepsRef.current[0].target || "") : (stepsRef.current[0]?.prompt || ""));
     runStep(0);
   };
+
   const stopSession = () => {
     setIsRunning(false);
     stopCountdown();
@@ -364,71 +403,121 @@ export default function PrompterPage() {
     pausedRemainingRef.current = null;
   };
 
-  /* Render z nowym, stałym layoutem */
+  /* ---- 5) Render ---- */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+  // Wygląd pytania i transkryptu (czytelne, białe, bez tła)
+  const questionStyle: React.CSSProperties = {
+    fontSize: 20,
+    lineHeight: 1.55,
+    maxWidth: 720,
+    margin: "0 auto",
+    textAlign: "center",
+  };
+  const transcriptStyle: React.CSSProperties = {
+    marginTop: 14,
+    fontSize: 20,
+    opacity: 0.98,
+    minHeight: 30,
+    textAlign: "center",
+  };
+
   return (
-    <main>
-      <div className="stage">
-        <video ref={videoRef} autoPlay playsInline muted className="cam" />
-        <div className="veil" />
-
-        {/* Górny panel zgodny z mockami */}
-        <header className="topbar-fixed">
-          <div className="topbar-inner">
-            <div className="top-left">
-              <div className="line">User: {USER_NAME}</div>
-              <div className="line">Day: {DAY_LABEL}</div>
-            </div>
-            <div className="top-right" style={{ textAlign: "right" }}>
-              <div className="line" role="button" onClick={stopSession}>STOP</div>
-              <div className="line" role="button" onClick={() => setIsRunning(v => !v)}>PAUSE</div>
-            </div>
-          </div>
-        </header>
-
-        {/* Timer – zamglony pod panelem */}
-        <div className="timer-ghost">{fmt(remaining)}</div>
-
-        {/* Overlay centralny */}
-        <div className="overlay-center">
-          <div className="center-wrap">
-            {!isRunning && (
-              <>
-                <div className="sys-text">Twoja sesja potrwa 6 minut – prosimy o wyraźne powtarzanie wyświetlanych treści.</div>
-                {micError && <div className="sys-text" style={{ opacity:.9, marginTop:10, color:"#ffdddd" }}>{micError} — sprawdź dostęp do mikrofonu i kamery.</div>}
-                <div className="start-big" role="button" onClick={startSession}>START</div>
-              </>
-            )}
-
-            {isRunning && (
-              <>
-                {steps[idx]?.mode === "VERIFY" && (
-                  <div className="sys-text" style={{ whiteSpace:"pre-wrap" }}>{displayText}</div>
-                )}
-                {steps[idx]?.mode === "SAY" && (
-                  <>
-                    <div className="sys-text" style={{ whiteSpace:"pre-wrap" }}>{displayText}</div>
-                    <div className="user-speech" style={{ whiteSpace:"pre-wrap", minHeight:36 }}>{sayTranscript}</div>
-                  </>
-                )}
-              </>
-            )}
-          </div>
+    <main className="prompter-full">
+      <header className="topbar topbar--dense">
+        <nav className="tabs">
+          <a className="tab active" href="/day" aria-current="page">Prompter</a>
+          <span className="tab disabled" aria-disabled="true" title="Wkrótce">Rysownik</span>
+        </nav>
+        <div className="top-info compact">
+          <span className="meta"><b>Użytkownik:</b> {USER_NAME}</span>
+          <span className="dot">•</span>
+          <span className="meta"><b>Dzień programu:</b> {DAY_LABEL}</span>
         </div>
+        <div className="controls-top">
+          {!isRunning ? (
+            <button className="btn" onClick={startSession}>Start</button>
+          ) : (
+            <button className="btn" onClick={stopSession}>Stop</button>
+          )}
+        </div>
+      </header>
 
-        {/* Pauza po 10 s ciszy */}
-        {silencePause && (
-          <div className="pause-overlay" onClick={resumeFromPause}>
-            <div className="pause-card">
-              <div className="l1">Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.</div>
-              <div className="l2">Jeśli chcesz kontynuować, dotknij ekranu.</div>
+      <div className="timer-top timer-top--strong" style={{ textAlign: "center" }}>{fmt(remaining)}</div>
+
+      <div className={`stage ${mirror ? "mirrored" : ""}`}>
+        <video ref={videoRef} autoPlay playsInline muted className="cam" />
+
+        {/* EKRAN STARTOWY */}
+        {!isRunning && (
+          <div className="overlay center">
+            <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6, margin: "0 auto" }}>
+              <p style={{ fontSize: 15.5, opacity: 0.92 }}>
+                Twoja sesja potrwa około <b>6 minut</b>.<br />
+                Prosimy o powtarzanie na głos wyświetlanych treści.
+              </p>
+              {micError && (
+                <p style={{ marginTop: 12, color: "#ffb3b3", fontSize: 14 }}>
+                  {micError} — sprawdź dostęp do mikrofonu i kamery.
+                </p>
+              )}
             </div>
           </div>
         )}
 
-        {/* Pasek dźwięku po prawej */}
-        <div className="meter-vertical" aria-hidden="true">
+        {/* SESJA */}
+        {isRunning && (
+          <div className="overlay center" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: "100%", padding: "0 16px" }}>
+              {/* VERIFY: tekst do powtórzenia */}
+              {steps[idx]?.mode === "VERIFY" && (
+                <div className="center-text fade" style={{ whiteSpace: "pre-wrap", textAlign: "center", fontSize: 22, lineHeight: 1.5, maxWidth: 760, margin: "0 auto" }}>
+                  {displayText}
+                </div>
+              )}
+
+              {/* SAY: pytanie + transkrypt */}
+              {steps[idx]?.mode === "SAY" && (
+                <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
+                  <div style={questionStyle}>{displayText}</div>
+                  <div style={transcriptStyle}>{sayTranscript}</div>
+                </div>
+              )}
+            </div>
+
+            {/* ⏸️ Overlay pauzy po 10 s ciszy — JEDYNA przypominajka */}
+            {silencePause && (
+              <div
+                className="overlay"
+                onClick={resumeFromPause}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 24,
+                  textAlign: "center",
+                  background: "rgba(0,0,0,0.35)",
+                  cursor: "pointer",
+                  zIndex: 50
+                }}
+              >
+                <div style={{ maxWidth: 680, lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 18, marginBottom: 14 }}>
+                    Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 600 }}>
+                    Jeśli chcesz kontynuować, dotknij ekranu.
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VU-meter */}
+        <div className="meter-vertical">
           <div className="meter-vertical-fill" style={{ height: `${levelPct}%` }} />
         </div>
       </div>
