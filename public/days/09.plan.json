@@ -1,0 +1,38 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Dziękuję, że wciąż próbuję." },
+    { "mode": "VERIFY", "target": "Jestem tu — mimo wszystkiego." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny sobie za to, że się nie poddałeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że doceniasz to, jak dużo już przeszedłeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś dumny ze swojej siły." },
+    { "mode": "SAY", "prompt": "Powiedz, że lubisz to, że wciąż potrafisz czuć." },
+
+    { "mode": "VERIFY", "target": "Wszystko, co przeszedłem, ma sens, jeśli potrafię być łagodny." },
+    { "mode": "VERIFY", "target": "Wdzięczność nie jest słabością — to siła, którą znam." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za każdy mały krok." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz wdzięczność za ludzi, którzy byli obok." },
+    { "mode": "SAY", "prompt": "Powiedz, że potrafisz już powiedzieć sobie „dziękuję” bez wstydu." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za wytrwałość." },
+
+    { "mode": "VERIFY", "target": "Nie jestem już w miejscu, z którego wyszedłem." },
+    { "mode": "VERIFY", "target": "Z każdym słowem doceniam to, że mogę mówić spokojnie." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za każdą decyzję, która przybliżyła Cię tu." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz wdzięczność do swojego ciała, że Cię niosło." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny za swój głos, który nie ucichł." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za odwagę, której kiedyś Ci brakowało." },
+
+    { "mode": "VERIFY", "target": "Z wdzięczności rodzi się spokój." },
+    { "mode": "VERIFY", "target": "Każde słowo, które dziś mówię, jest darem dla mnie samego." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za to, że jesteś tu, mimo zmęczenia." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za cierpliwość." },
+    { "mode": "SAY", "prompt": "Powiedz, że czujesz wdzięczność do siebie za wszystko, co przetrwałeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny, że potrafisz już mówić do siebie z szacunkiem." },
+
+    { "mode": "VERIFY", "target": "Wdzięczność to moja forma miłości." },
+    { "mode": "VERIFY", "target": "Dziękuję sobie, że wciąż wierzę w dobro." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za to, że potrafisz czuć więcej niż kiedyś." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz za każdy dzień, w którym się nie poddałeś." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz za to, że potrafisz już odpoczywać." },
+    { "mode": "SAY", "prompt": "Powiedz, że dziękujesz sobie za wszystko, co doprowadziło Cię tu." }
+  ]
+}
