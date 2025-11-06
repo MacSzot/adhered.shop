@@ -1,4 +1,3 @@
-// app/day/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -11,8 +10,8 @@ type PlanStep = {
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
-  prep_ms?: number;   // opóźnienie przed startem nagrywania
-  dwell_ms?: number;  // długość okna SAY
+  prep_ms?: number;
+  dwell_ms?: number;
   note?: string;
 };
 
@@ -50,10 +49,10 @@ export default function PrompterPage() {
   // Ustawienia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
-  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
+  const dayFileParam = dayRaw.padStart(2, "0");
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
-    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
+    return Number.isNaN(n) ? dayRaw : String(n);
   })();
 
   const MAX_TIME = 6 * 60; // 6 minut
@@ -74,11 +73,11 @@ export default function PrompterPage() {
   const [mirror] = useState(true);
   const [micError, setMicError] = useState<string | null>(null);
 
-  // ⏸️ Pauza ciszy (auto-pauza): jedyna przypominajka po 10 s
+  // Auto-pauza po 10 s ciszy
   const [silencePause, setSilencePause] = useState(false);
   const pausedRemainingRef = useRef<number | null>(null);
 
-  // 👉 czy mamy już stream (żeby ukryć natywny „play”)
+  // Czy mamy już strumień (żeby ukryć natywny „play”)
   const [hasStream, setHasStream] = useState(false);
 
   // Refy aktualnych wartości
@@ -88,14 +87,6 @@ export default function PrompterPage() {
   useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
-
-  // Diagnoza środowiska (jednorazowo)
-  useEffect(() => {
-    console.log("[env] ua:", navigator.userAgent);
-    console.log("[env] MediaRecorder:", typeof (window as any).MediaRecorder !== "undefined");
-    console.log("[env] mp4:", MediaRecorder.isTypeSupported?.("audio/mp4"));
-    console.log("[env] webm/opus:", MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus"));
-  }, []);
 
   // ===== TIMER SESJI =====
   const endAtRef = useRef<number | null>(null);
@@ -200,8 +191,9 @@ export default function PrompterPage() {
 
         const data = new Uint8Array(analyser.fftSize);
         const loop = () => {
-          if (!analyserRef.current || !isRunningRef.current) {
-            rafRef.current = requestAnimationFrame(loop); // utrzymuj animację paska
+          // animuj pasek nawet gdy zatrzymane (żeby UI żyło)
+          if (!analyserRef.current) {
+            rafRef.current = requestAnimationFrame(loop);
             return;
           }
           analyser.getByteTimeDomainData(data);
@@ -229,7 +221,7 @@ export default function PrompterPage() {
             speakingFramesRef.current = 0;
           }
 
-          // Jedyna „auto-pauza” po 10 s ciszy
+          // Auto-pauza po 10 s rzeczywistej ciszy
           if (isRunningRef.current && !silencePause) {
             const now = Date.now();
             if (now - lastVoiceAtRef.current >= 10_000) {
@@ -297,59 +289,44 @@ export default function PrompterPage() {
   /* ===== WHISPER: start/stop ===== */
   async function startSayCaptureWhisper() {
     setSayTranscript("");
-
     const stream = streamRef.current;
-    if (!stream) { console.warn("No streamRef"); return; }
+    if (!stream) return;
 
-    // Safari / iOS najpewniej wymaga audio/mp4; fallback na webm/opus
-    let mime = "";
-    if (MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
-    else if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
+    const mime = MediaRecorder.isTypeSupported("audio/mp4")
+      ? "audio/mp4"
+      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "");
+    if (!mime) { console.warn("MediaRecorder: brak wspieranego MIME."); return; }
 
-    if (!mime) {
-      console.error("MediaRecorder: no supported MIME");
-      alert("Twoja przeglądarka nie obsługuje nagrywania audio. Użyj aktualnego Safari/Chrome.");
-      return;
-    }
-
-    console.log("[rec] using mime =", mime);
     const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64_000 });
     recRef.current = mr;
 
-    mr.onstart = () => console.log("[rec] started");
-    mr.onerror = (e) => console.error("[rec] error", e);
-    mr.onstop = () => console.log("[rec] stopped");
-
     mr.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
-      console.log("[rec] chunk", e.data.type, e.data.size);
-
       const fd = new FormData();
       const filename = mime.includes("mp4") ? "chunk.m4a" : "chunk.webm";
       fd.append("audio", e.data, filename);
-
       try {
         const resp = await fetch("/api/whisper", { method: "POST", body: fd });
-        if (!resp.ok) { console.warn("[whisper] HTTP", resp.status, await resp.text()); return; }
         const json = await resp.json();
         if (json?.text) {
-          setSayTranscript(prev => (prev ? prev + " " : "") + json.text);
+          setSayTranscript((p) => (p ? p + " " : "") + json.text);
           lastVoiceAtRef.current = Date.now();
+        } else if (json?.error) {
+          console.warn("Whisper API error:", json.error);
         }
       } catch (err) {
-        console.warn("[whisper] fetch failed:", err);
+        console.warn("Whisper fetch failed:", err);
       }
     };
 
-    // krótszy interwał – iOS/Safari bywa kapryśne
-    try { mr.start(1000); }
+    try { mr.start(2000); }
     catch {
-      try { mr.start(); } catch (e) { console.error("mr.start failed", e); }
+      try { mr.start(); } catch {}
       chunkTimerRef.current = window.setInterval(() => {
         if (recRef.current && recRef.current.state === "recording") {
           try { recRef.current.requestData(); } catch {}
         }
-      }, 1000);
+      }, 2000);
     }
   }
 
@@ -371,11 +348,38 @@ export default function PrompterPage() {
 
     clearStepTimers();
     setSayTranscript("");
+    heardThisStepRef.current = false;
 
     if (s.mode === "VERIFY") {
+      // === AUTO-NEXT DLA VERIFY ===
       stopSayCaptureWhisper();
       setDisplayText(s.target || "");
+
+      const HARD_TIMEOUT_MS = 8000;     // max 8 s na ten krok
+      const AFTER_VOICE_DELAY_MS = 900; // 0.9 s po wykryciu mowy
+
+      // twardy timeout
+      stepTimerRef.current = window.setTimeout(() => {
+        if (idxRef.current !== i || !stepsRef.current[i]) return;
+        gotoNext(i);
+      }, HARD_TIMEOUT_MS);
+
+      // miękkie przejście po mowie
+      const checkVoice = () => {
+        if (idxRef.current !== i || !stepsRef.current[i]) return;
+        if (heardThisStepRef.current) {
+          if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
+          advanceTimerRef.current = window.setTimeout(() => {
+            if (idxRef.current !== i) return;
+            gotoNext(i);
+          }, AFTER_VOICE_DELAY_MS);
+          return;
+        }
+        advanceTimerRef.current = window.setTimeout(checkVoice, 120);
+      };
+      checkVoice();
     } else {
+      // === SAY ===
       const prep = Number(s.prep_ms ?? 200);
       const dwell = Number(s.dwell_ms ?? 12000);
 
@@ -408,7 +412,7 @@ export default function PrompterPage() {
 
   /* ---- 4) Start/Stop/Wznów ---- */
   const startSession = async () => {
-    if (isPaused) {              // wznawiamy z pauzy
+    if (isPaused) {
       resumeFromPause();
       return;
     }
@@ -459,7 +463,6 @@ export default function PrompterPage() {
 
   return (
     <main className="prompter-full">
-      {/* WYŻSZY TOPBAR z dwoma liniami po lewej oraz STOP/PAUSE w kolumnie */}
       <header className="topbar topbar--dense topbar--tall">
         <div className="top-sides">
           <div className="top-left">
@@ -515,14 +518,12 @@ export default function PrompterPage() {
         {isRunning && (
           <div className="overlay center" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ width: "100%", padding: "0 16px" }}>
-              {/* VERIFY: tekst do powtórzenia */}
               {steps[idx]?.mode === "VERIFY" && (
                 <div className="center-text fade" style={{ whiteSpace: "pre-wrap", textAlign: "center", fontSize: 22, lineHeight: 1.5, maxWidth: 760, margin: "0 auto" }}>
                   {displayText}
                 </div>
               )}
 
-              {/* SAY: pytanie + transkrypt */}
               {steps[idx]?.mode === "SAY" && (
                 <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
                   <div style={questionStyle}>{displayText}</div>
@@ -533,7 +534,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* ⏸️ Powiadomienie po 10 s ciszy – na dole, dotknięcie = wznów */}
+        {/* ⏸️ Powiadomienie po 10 s ciszy – na dole */}
         {silencePause && (
           <div className="pause-overlay" onClick={resumeFromPause}>
             <div className="pause-card">
@@ -551,4 +552,3 @@ export default function PrompterPage() {
     </main>
   );
 }
-
