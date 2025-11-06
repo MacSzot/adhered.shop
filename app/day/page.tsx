@@ -36,8 +36,7 @@ function getParam(name: string, fallback: string) {
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
-type SR = any;
-function getSpeechRecognitionCtor(): SR | null {
+function getSpeechRecognitionCtor(): any | null {
   if (typeof window === "undefined") return null;
   return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
 }
@@ -143,7 +142,7 @@ export default function PrompterPage() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const audioActiveRef = useRef(false); // ✅ tylko gdy mamy mikrofon
+  const audioActiveRef = useRef(false); // tylko gdy mamy mikrofon
 
   const speakingFramesRef = useRef(0);
   const heardThisStepRef = useRef(false);
@@ -152,6 +151,10 @@ export default function PrompterPage() {
   // Web Speech (desktop)
   const SR_CTOR = getSpeechRecognitionCtor();
   const speechRecRef = useRef<InstanceType<typeof SR_CTOR> | null>(null);
+
+  // Whisper (mobile)
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const mrIntervalRef = useRef<number | null>(null);
 
   // Pauza – ile zostało
   const pausedRemainingRef = useRef<number | null>(null);
@@ -357,9 +360,6 @@ export default function PrompterPage() {
   }
 
   /* ---- 5) Whisper (mobile) ---- */
-  const mrRef = useRef<MediaRecorder | null>(null);
-  const mrIntervalRef = useRef<number | null>(null);
-
   function startWhisperRecorder() {
     if (typeof MediaRecorder === "undefined") {
       console.warn("Brak MediaRecorder.");
@@ -433,7 +433,7 @@ export default function PrompterPage() {
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
 
-    // Dzień 1: mikrofon dopiero od kroku 6 (po 5 intro). Kamera w Dniu 1 NIGDY.
+    // Dzień 1: mikrofon dopiero od kroku 6 (po 5 intro). Kamera w Dniu 1 nigdy.
     if (isDayOne) {
       const needMicNow = i >= 6;
       if (needMicNow && !audioActiveRef.current) {
@@ -450,7 +450,17 @@ export default function PrompterPage() {
 
     if (s.mode === "VERIFY") {
       setDisplayText(s.target || "");
-      // Zielony/next odpala się po pierwszym głosie (gdy mic jest aktywny)
+
+      // Auto-advance po 5s, jeśli mikrofon NIE jest aktywny (np. intro 0–4 dnia 1)
+      if (!audioActiveRef.current) {
+        verifyNextTimerRef.current = window.setTimeout(() => {
+          setFlashGreen(false);
+          gotoNext(i);
+        }, VERIFY_NEXT_AT);
+        return;
+      }
+
+      // Gdy mikrofon jest aktywny – czekamy na głos i wtedy włączamy zielony i przejście (onFirstVoiceHeard)
     } else {
       setDisplayText(s.prompt || "");
       sayGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), prep + SAY_GREEN_AT);
@@ -490,7 +500,7 @@ export default function PrompterPage() {
       if (!ok) { setIsRunning(false); return; }
     }
 
-    // pre-warm whisper (żeby pierwsza paczka nie była zimnym startem)
+    // pre-warm whisper
     try { await fetch("/api/whisper", { cache: "no-store" }); } catch {}
 
     setIsRunning(true);
@@ -579,7 +589,6 @@ export default function PrompterPage() {
       <div className="timer-top timer-top--strong" style={{ textAlign: "center" }}>{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
-        {/* Dzień 1 nie używa wideo, więc videoRef pozostanie puste; Dni 2+ pokażą kamerę */}
         <video ref={videoRef} autoPlay playsInline muted className={`cam ${!hasStream ? "video-hidden" : ""}`} />
 
         {/* START */}
@@ -619,7 +628,7 @@ export default function PrompterPage() {
           </div>
         )}
 
-        {/* Pauza po 10 s ciszy – aktywna tylko, gdy mic jest włączony */}
+        {/* Pauza po 10 s ciszy */}
         {silencePause && (
           <div
             className="pause-overlay"
@@ -656,5 +665,6 @@ export default function PrompterPage() {
     </main>
   );
 }
+
 
 
