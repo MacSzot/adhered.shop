@@ -1,0 +1,55 @@
+{
+  "steps": [
+    { "mode": "VERIFY", "target": "Zaczynam spokojnie, w swoim rytmie." },
+    { "mode": "VERIFY", "target": "Każde słowo ma ciężar mojego doświadczenia." },
+    { "mode": "VERIFY", "target": "Nie przyspieszam, nie spowalniam." },
+    { "mode": "VERIFY", "target": "Pozwalam swojemu głosowi brzmieć prawdziwie." },
+    { "mode": "VERIFY", "target": "Nie boję się słyszeć siebie." },
+    { "mode": "VERIFY", "target": "Słowa płyną naturalnie." },
+    { "mode": "VERIFY", "target": "Nie muszę mówić doskonale, żeby być prawdziwy." },
+
+    { "mode": "SAY", "prompt": "Powiedz, co dziś brzmi w Tobie najgłośniej." },
+
+    { "mode": "VERIFY", "target": "Każde zdanie jest częścią mojego głosu." },
+    { "mode": "VERIFY", "target": "Nie tłumię emocji – pozwalam im mieć dźwięk." },
+    { "mode": "VERIFY", "target": "Nie muszę się tłumaczyć z tego, co czuję." },
+    { "mode": "VERIFY", "target": "To, co mówię, staje się moim rytmem." },
+
+    { "mode": "SAY", "prompt": "Powiedz coś, co chcesz dziś w sobie zachować." },
+
+    { "mode": "VERIFY", "target": "Nie uciekam przed swoim tonem." },
+    { "mode": "VERIFY", "target": "Mój głos jest zakorzeniony w spokoju." },
+    { "mode": "VERIFY", "target": "Nie ma pośpiechu, jest obecność." },
+    { "mode": "VERIFY", "target": "Słowa mogą być delikatne i prawdziwe." },
+
+    { "mode": "SAY", "prompt": "Powiedz jedno zdanie, które brzmi jak wdzięczność." },
+
+    { "mode": "VERIFY", "target": "To, że mówię, to akt odwagi." },
+    { "mode": "VERIFY", "target": "Nie potrzebuję potwierdzenia, żeby brzmieć pewnie." },
+    { "mode": "VERIFY", "target": "Nie porównuję swojego tonu z niczyim innym." },
+    { "mode": "VERIFY", "target": "Moje słowa uczą mnie, kim jestem." },
+
+    { "mode": "SAY", "prompt": "Powiedz coś, co brzmi jak spokój." },
+
+    { "mode": "VERIFY", "target": "Nie boję się ciszy pomiędzy słowami." },
+    { "mode": "VERIFY", "target": "Cisza też ma głos." },
+    { "mode": "VERIFY", "target": "Każde zdanie, które wypowiadam, ma znaczenie." },
+    { "mode": "VERIFY", "target": "Nie odcinam się od siebie, gdy mówię." },
+
+    { "mode": "SAY", "prompt": "Powiedz, co chcesz dziś zaakceptować w sobie." },
+
+    { "mode": "VERIFY", "target": "Słowa są odbiciem mojego stanu." },
+    { "mode": "VERIFY", "target": "Nie ukrywam się za tonem." },
+    { "mode": "VERIFY", "target": "Jestem spokojny, nawet gdy się waham." },
+    { "mode": "VERIFY", "target": "Mój głos jest mostem do wewnątrz." },
+
+    { "mode": "SAY", "prompt": "Powiedz coś, co chciałbyś dziś usłyszeć od siebie." },
+
+    { "mode": "VERIFY", "target": "Z każdym słowem staję się bliżej siebie." },
+    { "mode": "VERIFY", "target": "To, że mówię, oznacza, że jestem obecny." },
+    { "mode": "VERIFY", "target": "Nie muszę niczego udowadniać – tylko być." },
+    { "mode": "VERIFY", "target": "Mój głos nie potrzebuje zgody, żeby istnieć." },
+
+    { "mode": "SAY", "prompt": "Powiedz, że słyszysz siebie – naprawdę." }
+  ]
+}
