@@ -1,10 +1,28 @@
 {
   "steps": [
     { "mode": "VERIFY", "target": "Jestem w bardzo dobrym miejscu." },
-    { "mode": "SAY", "prompt": "A teraz popatrz na siebie i podziękuj sobie. Zrób to ze spokojem — Twoje słowa wyświetlą się na ekranie.", "prep_ms": 300, "dwell_ms": 12000 },
-    { "mode": "VERIFY", "target": "Szacunek do siebie staje się naturalny." },
-    { "mode": "SAY", "prompt": "A teraz popatrz na siebie i przyznaj sobie rację. Zrób to z przekonaniem — Twoje słowa wyświetlą się na ekranie.", "prep_ms": 300, "dwell_ms": 12000 },
-    { "mode": "VERIFY", "target": "W moim wnętrzu dojrzewa spokój i zgoda." },
-    { "mode": "SAY", "prompt": "A teraz popatrz na siebie i pogratuluj sobie. Zrób to z radością — Twoje słowa wyświetlą się na ekranie.", "prep_ms": 300, "dwell_ms": 12000 }
+    { "mode": "VERIFY", "target": "Każdego dnia coraz lepiej rozumiem siebie." },
+    { "mode": "VERIFY", "target": "Mam w sobie więcej spokoju niż kiedyś." },
+    {
+      "mode": "SAY",
+      "prompt": "Powiedz teraz do siebie, że się szanujesz. Twoje słowa pojawią się na ekranie.",
+      "prep_ms": 300,
+      "dwell_ms": 12000
+    },
+    {
+      "mode": "SAY",
+      "prompt": "Powiedz coś, co chciałbyś usłyszeć od innych. Twoje słowa pojawią się na ekranie.",
+      "prep_ms": 300,
+      "dwell_ms": 12000
+    },
+    { "mode": "VERIFY", "target": "To, kim jestem, staje się dla mnie coraz bardziej wystarczające." },
+    { "mode": "VERIFY", "target": "Zasługuję na to, by być dla siebie dobry." },
+    {
+      "mode": "SAY",
+      "prompt": "Powiedz teraz do siebie: „Jestem dla siebie ważny.”",
+      "prep_ms": 300,
+      "dwell_ms": 12000
+    }
   ]
 }
+
