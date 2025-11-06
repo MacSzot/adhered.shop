@@ -8,12 +8,8 @@ type PlanStep = {
   mode: "VERIFY" | "SAY";
   target?: string;
   prompt?: string;
-  min_sentences?: number;
-  starts_with?: string[];
-  starts_with_any?: string[];
-  prep_ms?: number;   // opóźnienie przed startem nagrywania
-  dwell_ms?: number;  // długość okna SAY
-  note?: string;
+  prep_ms?: number;
+  dwell_ms?: number;
 };
 
 async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" | "txt"; steps: PlanStep[] }> {
@@ -43,48 +39,61 @@ function getParam(name: string, fallback: string) {
   return (v && v.trim()) || fallback;
 }
 
+/* =============== FEATURE DETECT =============== */
+type SR = any;
+function getSpeechRecognitionCtor(): SR | null {
+  if (typeof window === "undefined") return null;
+  return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
+}
+function isiOSSafari(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+  return isIOS && isSafari;
+}
+
 /* =============== PAGE =============== */
 export default function PrompterPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Ustawienia
+  // Ustawienia stałe
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
-  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
+  const dayFileParam = dayRaw.padStart(2, "0");
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
-    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
+    return Number.isNaN(n) ? dayRaw : String(n);
   })();
 
-  const MAX_TIME = 6 * 60; // 6 minut
+  // Timingi (uzgodnione)
+  const MAX_TIME = 6 * 60;           // 6 min sesji
+  const VERIFY_GREEN_AT = 4000;      // po 4s od pierwszego głosu
+  const VERIFY_NEXT_AT = 5000;       // po 5s (flash trwa 1s)
+  const SAY_LIMIT_TOTAL = 12000;     // twarde 12s od startu SAY
+  const SAY_GREEN_AT = 11000;        // 11s → 1s flash
+  const SILENCE_TIMEOUT = 10000;     // 10s ciszy → overlay pauzy
 
-  // Progi/czasy VAD
+  // Progi VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
 
-  // Stany
+  // Stany UI
   const [steps, setSteps] = useState<PlanStep[]>([]);
   const [idx, setIdx] = useState(0);
   const [displayText, setDisplayText] = useState<string>("");
   const [sayTranscript, setSayTranscript] = useState<string>("");
 
   const [isRunning, setIsRunning] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+  const [isPaused, setIsPaused] = useState(false); // ręczna/pauza ciszy (UI)
   const [remaining, setRemaining] = useState(MAX_TIME);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
   const [micError, setMicError] = useState<string | null>(null);
-
-  // „zielone” podświetlenie całego zdania na 1 s przed przejściem
-  const [flashGreen, setFlashGreen] = useState(false);
-
-  // ⏸️ Pauza ciszy (auto-pauza) po 10 s realnej ciszy
-  const [silencePause, setSilencePause] = useState(false);
-  const pausedRemainingRef = useRef<number | null>(null);
-
-  // czy mamy już stream (żeby ukryć natywny „play”)
   const [hasStream, setHasStream] = useState(false);
+  const [flashGreen, setFlashGreen] = useState(false);
+  const [silencePause, setSilencePause] = useState(false);
 
-  // Refy aktualnych wartości
+  // Refs aktualnych wartości
   const isRunningRef = useRef(isRunning);
   const idxRef = useRef(idx);
   const stepsRef = useRef<PlanStep[]>([]);
@@ -92,7 +101,7 @@ export default function PrompterPage() {
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
 
-  // ===== TIMER SESJI =====
+  // Zegar sesji
   const endAtRef = useRef<number | null>(null);
   const countdownIdRef = useRef<number | null>(null);
 
@@ -115,26 +124,34 @@ export default function PrompterPage() {
     endAtRef.current = null;
   }
 
-  // Timery/RAF
-  const stepTimerRef = useRef<number | null>(null);
-  const advanceTimerRef = useRef<number | null>(null);
-  const flashTimerRef = useRef<number | null>(null);
-  const rafRef = useRef<number | null>(null);
+  // Timery kroków
+  const verifyGreenTimerRef = useRef<number | null>(null);
+  const verifyNextTimerRef = useRef<number | null>(null);
+  const sayGreenTimerRef = useRef<number | null>(null);
+  const sayNextTimerRef = useRef<number | null>(null);
+  const prepTimerRef = useRef<number | null>(null);
 
-  // AV
+  // Audio/Video
+  const rafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const heardThisStepRef = useRef(false);
   const speakingFramesRef = useRef(0);
-
-  // Whisper recorder
-  const recRef = useRef<MediaRecorder | null>(null);
-  const chunkTimerRef = useRef<number | null>(null);
-
-  // znacznik ostatniego realnego głosu (dla pauzy po 10 s)
+  const heardThisStepRef = useRef(false);
   const lastVoiceAtRef = useRef<number>(Date.now());
+
+  // Web Speech
+  const SR = getSpeechRecognitionCtor();
+  const speechRecRef = useRef<InstanceType<typeof SR> | null>(null);
+  const speechActiveRef = useRef(false);
+
+  // Whisper (fallback dla Safari/iOS)
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const mrIntervalRef = useRef<number | null>(null);
+
+  // Pauza – ile zostało
+  const pausedRemainingRef = useRef<number | null>(null);
 
   /* ---- 1) Wczytaj plan ---- */
   useEffect(() => {
@@ -156,7 +173,7 @@ export default function PrompterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ---- 2) Start/Stop AV + VU + watchdog ciszy ---- */
+  /* ---- 2) Start/Stop AV + VAD ---- */
   async function startAV(): Promise<boolean> {
     setMicError(null);
     speakingFramesRef.current = 0;
@@ -167,9 +184,9 @@ export default function PrompterPage() {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
             channelCount: 1,
           },
         });
@@ -191,16 +208,13 @@ export default function PrompterPage() {
 
         const analyser = ac.createAnalyser();
         analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.86;
+        analyser.smoothingTimeConstant = 0.75; // szybciej reaguje
         ac.createMediaStreamSource(streamRef.current!).connect(analyser);
         analyserRef.current = analyser;
 
         const data = new Uint8Array(analyser.fftSize);
         const loop = () => {
-          if (!analyserRef.current) {
-            rafRef.current = requestAnimationFrame(loop);
-            return;
-          }
+          if (!analyserRef.current) return;
           analyser.getByteTimeDomainData(data);
 
           let peak = 0, sumSq = 0;
@@ -213,34 +227,29 @@ export default function PrompterPage() {
           const rms = Math.sqrt(sumSq / data.length);
           const vu = Math.min(100, peak * 480);
 
-          setLevelPct(prev => Math.max(vu, prev * 0.85));
+          setLevelPct(prev => Math.max(vu, prev * 0.82));
 
           const speakingNow = (rms > 0.017) || (peak > 0.040) || (vu > 7);
-          if (speakingNow) {
-            speakingFramesRef.current += 1;
-            if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
-              heardThisStepRef.current = true;
-              lastVoiceAtRef.current = Date.now();
-            }
-          } else {
-            speakingFramesRef.current = 0;
-          }
+          const now = Date.now();
 
-          // Auto-pauza po 10 s realnej ciszy – działa globalnie,
-          // ale resetujemy „ciszę” na starcie każdego kroku
-          if (isRunningRef.current && !silencePause) {
-            const now = Date.now();
-            if (now - lastVoiceAtRef.current >= 10_000) {
-              let secsLeft = remaining;
-              if (endAtRef.current != null) {
-                secsLeft = Math.max(0, Math.ceil((endAtRef.current - now) / 1000));
+          if (isRunningRef.current) {
+            if (speakingNow) {
+              speakingFramesRef.current += 1;
+              if (speakingFramesRef.current >= SPEAKING_FRAMES_REQUIRED) {
+                if (!heardThisStepRef.current) {
+                  heardThisStepRef.current = true;
+                  onFirstVoiceHeard();
+                }
+                lastVoiceAtRef.current = now;
               }
-              pausedRemainingRef.current = secsLeft;
-              stopCountdown();
-              setRemaining(secsLeft);
-              setSilencePause(true);
-              setIsRunning(false);
-              setIsPaused(true);
+            } else {
+              speakingFramesRef.current = 0;
+            }
+
+            // Pauza ciszy (10s)
+            if (!silencePause) {
+              const delta = now - lastVoiceAtRef.current;
+              if (delta >= SILENCE_TIMEOUT) triggerSilencePause();
             }
           }
 
@@ -259,6 +268,7 @@ export default function PrompterPage() {
 
   function stopAV() {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
@@ -269,45 +279,107 @@ export default function PrompterPage() {
     setHasStream(false);
   }
 
-  // Ręczna pauza z przycisku
-  function pauseSession() {
-    if (!isRunning) return;
-    stopCountdown();
-    clearStepTimers();
-    stopSayCaptureWhisper();
-    setIsRunning(false);
-    setIsPaused(true);
-    setSilencePause(false);
-    pausedRemainingRef.current = remaining;
+  /* ---- 3) Reakcje na głos i ciszę ---- */
+  function onFirstVoiceHeard() {
+    lastVoiceAtRef.current = Date.now();
+    const s = stepsRef.current[idxRef.current];
+    if (!s) return;
+    if (s.mode === "VERIFY") {
+      // 4s → flash; 5s → next (tylko jeśli był głos)
+      if (verifyGreenTimerRef.current) clearTimeout(verifyGreenTimerRef.current);
+      if (verifyNextTimerRef.current) clearTimeout(verifyNextTimerRef.current);
+
+      verifyGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), VERIFY_GREEN_AT);
+      verifyNextTimerRef.current = window.setTimeout(() => {
+        setFlashGreen(false);
+        gotoNext(idxRef.current);
+      }, VERIFY_NEXT_AT);
+    }
+    // W SAY timery lecą od startu kroku (twardy limit), nic tu nie uruchamiamy.
   }
 
-  // Wznowienie po tapnięciu w komunikat lub przycisk START
-  function resumeFromPause() {
+  function triggerSilencePause() {
+    let secsLeft = remaining;
+    if (endAtRef.current != null) secsLeft = Math.max(0, Math.ceil((endAtRef.current - Date.now()) / 1000));
+    pausedRemainingRef.current = secsLeft;
+    stopCountdown();
+
+    // Zatrzymaj rozpoznawanie (oba tryby)
+    stopWebSpeech();
+    stopWhisperRecorder();
+
+    setSilencePause(true);
+    setIsRunning(false);
+
+    clearStepTimers();
+  }
+
+  function clickSilenceOverlayGoNext() {
+    setSilencePause(false);
+    setFlashGreen(false);
+    gotoNext(idxRef.current);
     const secs = pausedRemainingRef.current ?? remaining;
     startCountdown(secs);
-    setSilencePause(false);
-    setIsPaused(false);
     setIsRunning(true);
-    lastVoiceAtRef.current = Date.now(); // ważne, żeby nie strzeliła pauza od razu
-    runStep(idxRef.current);
+    lastVoiceAtRef.current = Date.now();
   }
 
-  /* ===== WHISPER: start/stop (chunk co 2 s) ===== */
-  async function startSayCaptureWhisper() {
-    setSayTranscript("");
+  function clearStepTimers() {
+    [verifyGreenTimerRef, verifyNextTimerRef, sayGreenTimerRef, sayNextTimerRef, prepTimerRef].forEach(r => {
+      if (r.current) { clearTimeout(r.current); r.current = null; }
+    });
+  }
 
+  /* ---- 4) SAY: dwa tryby (Web Speech vs Whisper) ---- */
+  function startWebSpeech() {
+    if (!SR) return;
+    const rec = new SR();
+    try {
+      rec.lang = "pl-PL";
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onresult = (ev: any) => {
+        let txt = "";
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const res = ev.results[i];
+          txt += res[0]?.transcript || "";
+        }
+        if (isRunningRef.current) {
+          setSayTranscript(txt.trim());
+          lastVoiceAtRef.current = Date.now();
+        }
+      };
+      rec.onerror = () => {};
+      rec.onend = () => { speechActiveRef.current = false; };
+      speechRecRef.current = rec;
+      speechActiveRef.current = true;
+      try { rec.start(); } catch {}
+    } catch {}
+  }
+  function stopWebSpeech() {
+    if (speechActiveRef.current && speechRecRef.current) {
+      try { speechRecRef.current.stop(); } catch {}
+      speechActiveRef.current = false;
+      speechRecRef.current = null;
+    }
+  }
+
+  function startWhisperRecorder() {
+    // Minimalny fallback: małe porcje (ok. 800 ms) → /api/whisper
     const stream = streamRef.current;
     if (!stream) return;
 
-    const mime = MediaRecorder.isTypeSupported("audio/mp4")
-      ? "audio/mp4"
-      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : "");
-    if (!mime) { console.warn("MediaRecorder: brak wspieranego MIME."); return; }
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : (MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "");
 
-    const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64_000 });
-    recRef.current = mr;
+    if (!mime) {
+      console.warn("MediaRecorder: brak MIME.");
+      return;
+    }
+
+    const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 });
+    mrRef.current = mr;
 
     mr.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
@@ -318,102 +390,79 @@ export default function PrompterPage() {
         const resp = await fetch("/api/whisper", { method: "POST", body: fd });
         const json = await resp.json();
         if (json?.text) {
-          setSayTranscript((p) => (p ? p + " " : "") + json.text);
+          setSayTranscript((prev) => {
+            const next = (prev ? prev + " " : "") + String(json.text || "").trim();
+            return next.trim();
+          });
           lastVoiceAtRef.current = Date.now();
-        } else if (json?.error) {
-          console.warn("Whisper API error:", json.error);
         }
-      } catch (err) {
-        console.warn("Whisper fetch failed:", err);
-      }
+      } catch {}
     };
 
-    try { mr.start(2000); }
-    catch {
-      try { mr.start(); } catch {}
-      chunkTimerRef.current = window.setInterval(() => {
-        if (recRef.current && recRef.current.state === "recording") {
-          try { recRef.current.requestData(); } catch {}
-        }
-      }, 2000);
-    }
+    try { mr.start(); } catch { try { mr.start(800); } catch {} }
+    // Wymuś porcje co ~800 ms (Safari czasem ignoruje timeslice)
+    mrIntervalRef.current = window.setInterval(() => {
+      if (mrRef.current && mrRef.current.state === "recording") {
+        try { mrRef.current.requestData(); } catch {}
+      }
+    }, 800);
+  }
+  function stopWhisperRecorder() {
+    if (mrIntervalRef.current) { clearInterval(mrIntervalRef.current); mrIntervalRef.current = null; }
+    if (mrRef.current) { try { mrRef.current.stop(); } catch {} mrRef.current = null; }
   }
 
-  function stopSayCaptureWhisper() {
-    if (chunkTimerRef.current) { clearInterval(chunkTimerRef.current); chunkTimerRef.current = null; }
-    if (recRef.current) { try { recRef.current.stop(); } catch {} recRef.current = null; }
-  }
-
-  /* ---- 3) Kroki ---- */
-  function clearStepTimers() {
-    if (stepTimerRef.current) { window.clearTimeout(stepTimerRef.current); stepTimerRef.current = null; }
-    if (advanceTimerRef.current) { window.clearTimeout(advanceTimerRef.current); advanceTimerRef.current = null; }
-    if (flashTimerRef.current) { window.clearTimeout(flashTimerRef.current); flashTimerRef.current = null; }
-  }
-
+  /* ---- 5) Kroki ---- */
   function runStep(i: number) {
-    if (!stepsRef.current.length) return;
+    clearStepTimers();
+    setFlashGreen(false);
+    setSayTranscript("");       // 🧹 czyść słowa użytkownika przy każdym kroku
+    heardThisStepRef.current = false;
+    speakingFramesRef.current = 0;
+    lastVoiceAtRef.current = Date.now();
+
+    // Zatrzymaj rozpoznawanie (na wszelki wypadek)
+    stopWebSpeech();
+    stopWhisperRecorder();
+
     const s = stepsRef.current[i];
     if (!s) return;
 
-    clearStepTimers();
-    setFlashGreen(false);
-    setSayTranscript("");               // 🧹 za każdym krokiem czyścimy słowa użytk.
-    heardThisStepRef.current = false;
-    speakingFramesRef.current = 0;
-    lastVoiceAtRef.current = Date.now(); // reset dla licznika ciszy
+    const prep = Number(s.prep_ms ?? 0);
 
     if (s.mode === "VERIFY") {
-      // Wyświetl tekst do powtórzenia
-      stopSayCaptureWhisper();
       setDisplayText(s.target || "");
 
-      // ⏱️ Logika 5 s: jeśli w ciągu kroku był dźwięk – po 4 s flash (1 s), po 5 s przechodzimy dalej
-      // (jeśli nie było dźwięku, nie robimy auto-next; pauza 10 s zadziała globalnie)
-      stepTimerRef.current = window.setTimeout(() => {
-        if (idxRef.current !== i || !isRunningRef.current) return;
-        if (heardThisStepRef.current) {
-          setFlashGreen(true);
-          flashTimerRef.current = window.setTimeout(() => setFlashGreen(false), 1000);
-        }
-      }, 4000);
-
-      advanceTimerRef.current = window.setTimeout(() => {
-        if (idxRef.current !== i || !isRunningRef.current) return;
-        if (heardThisStepRef.current) {
-          gotoNext(i);
-        } else {
-          // Brak dźwięku ⇒ zostawiamy zdanie; po 10 s zadziała overlay pauzy
-        }
-      }, 5000);
-
+      // Timery VERIFY — tylko jeśli był głos (uruchamiane w onFirstVoiceHeard)
+      // Cisza 10s obsługiwana globalnie w pętli VAD
     } else {
-      // Pytanie + przechwytywanie mowy
-      const prep = Number(s.prep_ms ?? 200);
-      const dwell = Number(s.dwell_ms ?? 12000); // czas dla SAY – jak w planie
-
-      stopSayCaptureWhisper();
       setDisplayText(s.prompt || "");
-      setSayTranscript("");
 
-      stepTimerRef.current = window.setTimeout(() => {
-        if (idxRef.current !== i || !isRunningRef.current) return;
-        startSayCaptureWhisper();
+      // Twardy limit SAY: 12s od startu kroku (uwzględnij prep)
+      sayGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), prep + SAY_GREEN_AT);
+      sayNextTimerRef.current = window.setTimeout(() => {
+        setFlashGreen(false);
+        gotoNext(i);
+      }, prep + SAY_LIMIT_TOTAL);
 
-        stepTimerRef.current = window.setTimeout(() => {
-          if (idxRef.current !== i) return;
-          stopSayCaptureWhisper();
-          gotoNext(i);                  // 🧹 przejście dalej automatycznie wyczyści transcript w runStep
-        }, dwell);
-      }, prep);
+      // Start rozpoznawania: Web Speech jeśli jest (Chrome/Edge), inaczej Whisper fallback (iOS/Safari)
+      if (SR && !isiOSSafari()) {
+        // Web Speech
+        prepTimerRef.current = window.setTimeout(() => startWebSpeech(), Math.max(0, prep));
+      } else {
+        // Whisper fallback (iOS Safari)
+        prepTimerRef.current = window.setTimeout(() => startWhisperRecorder(), Math.max(0, prep));
+      }
     }
   }
 
   function gotoNext(i: number) {
     clearStepTimers();
-    stopSayCaptureWhisper();
     setFlashGreen(false);
-    setSayTranscript("");               // 🧹 nie przenosimy słów do następnego kroku
+    stopWebSpeech();
+    stopWhisperRecorder();
+    setSayTranscript(""); // 🧹 znika razem z komendą
+
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
     const n = stepsRef.current[next];
@@ -421,48 +470,41 @@ export default function PrompterPage() {
     runStep(next);
   }
 
-  /* ---- 4) Start/Stop/Wznów ---- */
+  /* ---- 6) Start/Stop ---- */
   const startSession = async () => {
-    if (isPaused) {
-      resumeFromPause();
-      return;
-    }
     if (!stepsRef.current.length) return;
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
     setIsRunning(true);
-    setIsPaused(false);
     setSilencePause(false);
     pausedRemainingRef.current = null;
     startCountdown(MAX_TIME);
     setIdx(0);
-    setFlashGreen(false);
-    setSayTranscript("");
-    setDisplayText(stepsRef.current[0]?.mode === "VERIFY" ? (stepsRef.current[0].target || "") : (stepsRef.current[0]?.prompt || ""));
+    const first = stepsRef.current[0];
+    setDisplayText(first?.mode === "VERIFY" ? (first?.target || "") : (first?.prompt || ""));
     runStep(0);
   };
 
   const stopSession = () => {
     setIsRunning(false);
-    setIsPaused(false);
+    setSilencePause(false);
     stopCountdown();
     clearStepTimers();
-    stopSayCaptureWhisper();
+    stopWebSpeech();
+    stopWhisperRecorder();
     stopAV();
     setLevelPct(0);
-    setSilencePause(false);
+    setSayTranscript("");
+    setFlashGreen(false);
     pausedRemainingRef.current = null;
     setRemaining(MAX_TIME);
-    setFlashGreen(false);
-    setSayTranscript("");
   };
 
-  /* ---- 5) Render ---- */
+  /* ---- 7) Render ---- */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
-  // Wygląd pytania i transkryptu (czytelne, białe, bez tła)
   const questionStyle: React.CSSProperties = {
-    fontSize: 22,                 // lekko większe komendy
+    fontSize: 22,
     lineHeight: 1.55,
     maxWidth: 720,
     margin: "0 auto",
@@ -471,27 +513,42 @@ export default function PrompterPage() {
   };
   const transcriptStyle: React.CSSProperties = {
     marginTop: 16,
-    fontSize: 24,                 // tekst użytkownika czytelniejszy
+    fontSize: 26,
     fontWeight: 800,
     opacity: 0.98,
     minHeight: 34,
     textAlign: "center",
+    textShadow: "0 0 22px rgba(0,0,0,.95)",
+    letterSpacing: "0.01em",
+    wordSpacing: "0.06em",
+    transition: "color .25s ease, opacity .25s ease",
+    color: flashGreen ? "#35ff7a" : "#ffffff",
+  };
+  const verifyStyle: React.CSSProperties = {
+    whiteSpace: "pre-wrap",
+    textAlign: "center",
+    fontSize: 24,
+    lineHeight: 1.5,
+    maxWidth: 760,
+    margin: "0 auto",
+    color: flashGreen ? "#8fff8f" : "rgba(255,255,255,.78)",
+    textShadow: "0 0 16px rgba(0,0,0,.9)",
+    transition: "color .25s ease"
   };
 
   return (
     <main className="prompter-full">
-      {/* TOPBAR */}
+      {/* GÓRNY PANEL – bez zmian designu */}
       <header className="topbar topbar--dense topbar--tall">
         <div className="top-sides">
           <div className="top-left">
             <div className="line"><b>Użytkownik:</b> {USER_NAME}</div>
             <div className="line"><b>Dzień programu:</b> {DAY_LABEL}</div>
           </div>
-
           <div className="controls-vert">
             {isRunning ? (
               <>
-                <button className="btn-ghost" onClick={pauseSession}>Pause</button>
+                <button className="btn-ghost" onClick={triggerSilencePause}>Pause</button>
                 <button className="btn-ghost" onClick={stopSession}>Stop</button>
               </>
             ) : (
@@ -504,15 +561,9 @@ export default function PrompterPage() {
       <div className="timer-top timer-top--strong" style={{ textAlign: "center" }}>{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`cam ${!hasStream ? "video-hidden" : ""}`}
-        />
+        <video ref={videoRef} autoPlay playsInline muted className={`cam ${!hasStream ? "video-hidden" : ""}`} />
 
-        {/* EKRAN STARTOWY / WZNÓW */}
+        {/* START */}
         {!isRunning && !silencePause && (
           <>
             <div className="overlay center">
@@ -536,42 +587,44 @@ export default function PrompterPage() {
         {isRunning && (
           <div className="overlay center" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ width: "100%", padding: "0 16px" }}>
-              {/* VERIFY: tekst do powtórzenia */}
               {steps[idx]?.mode === "VERIFY" && (
-                <div
-                  className="center-text fade"
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    textAlign: "center",
-                    fontSize: 24,
-                    lineHeight: 1.5,
-                    maxWidth: 760,
-                    margin: "0 auto",
-                    color: flashGreen ? "#8fff8f" : "rgba(255,255,255,.78)",
-                    textShadow: "0 0 16px rgba(0,0,0,.9)"
-                  }}
-                >
-                  {displayText}
-                </div>
+                <div className="center-text fade" style={verifyStyle}>{displayText}</div>
               )}
-
-              {/* SAY: pytanie + transkrypt */}
               {steps[idx]?.mode === "SAY" && (
                 <div className="center-text fade" style={{ whiteSpace: "pre-wrap" }}>
                   <div style={questionStyle}>{displayText}</div>
-                  <div style={transcriptStyle}>{sayTranscript}</div>
+                  <div style={transcriptStyle}>{sayTranscript || "…"}</div>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* ⏸️ Powiadomienie po 10 s ciszy – na dole, tap = wznów */}
+        {/* Pauza po 10 s ciszy – na dole; TAP = NEXT */}
         {silencePause && (
-          <div className="pause-overlay" onClick={resumeFromPause}>
-            <div className="pause-card">
-              <div className="l1">Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.</div>
-              <div className="l2">Jeśli chcesz kontynuować, dotknij ekranu.</div>
+          <div
+            className="pause-overlay"
+            onClick={clickSilenceOverlayGoNext}
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "flex-end",
+              justifyContent: "center",
+              padding: 24,
+              textAlign: "center",
+              background: "rgba(0,0,0,0.35)",
+              cursor: "pointer",
+              zIndex: 50
+            }}
+          >
+            <div style={{ maxWidth: 680, lineHeight: 1.5, marginBottom: 28 }}>
+              <div style={{ fontSize: 18, marginBottom: 10 }}>
+                Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                Jeśli chcesz kontynuować, dotknij ekranu.
+              </div>
             </div>
           </div>
         )}
