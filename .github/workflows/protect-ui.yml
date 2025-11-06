@@ -1,0 +1,31 @@
+name: Protect UI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect UI changes
+        id: detect
+        run: |
+          set -e
+          BASE="origin/${{ github.base_ref }}"
+          git fetch origin ${{ github.base_ref }} --depth=1
+          CHANGED=$(git diff --name-only "$BASE"...HEAD | grep -E '^(app/globals.css|app/day/page.tsx)$' || true)
+          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
+
+      - name: Block PR if UI changed without flag
+        if: steps.detect.outputs.changed != '' && !contains(github.event.pull_request.title, '[ui-change]')
+        run: |
+          echo "UI files changed:" 
+          echo "${{ steps.detect.outputs.changed }}"
+          echo ""
+          echo "Dodaj do TYTUŁU PR frazę: [ui-change] (świadoma zmiana UI)."
+          exit 1
