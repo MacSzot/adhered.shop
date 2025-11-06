@@ -153,10 +153,6 @@ export default function PrompterPage() {
   const SR_CTOR = getSpeechRecognitionCtor();
   const speechRecRef = useRef<InstanceType<typeof SR_CTOR> | null>(null);
 
-  // Whisper (mobile)
-  const mrRef = useRef<MediaRecorder | null>(null);
-  const mrIntervalRef = useRef<number | null>(null);
-
   // Pauza – ile zostało
   const pausedRemainingRef = useRef<number | null>(null);
 
@@ -363,6 +359,7 @@ export default function PrompterPage() {
   /* ---- 5) Whisper (mobile) ---- */
   const mrRef = useRef<MediaRecorder | null>(null);
   const mrIntervalRef = useRef<number | null>(null);
+
   function startWhisperRecorder() {
     if (typeof MediaRecorder === "undefined") {
       console.warn("Brak MediaRecorder.");
@@ -436,12 +433,10 @@ export default function PrompterPage() {
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
 
-    // Dzień 1: mikrofon dopiero od kroku 6 (po 5 intro + komunikacie)
-    // Kamera w Dniu 1 NIGDY (audioOnly).
+    // Dzień 1: mikrofon dopiero od kroku 6 (po 5 intro). Kamera w Dniu 1 NIGDY.
     if (isDayOne) {
-      const needMicNow = i >= 6; // 0..4 intro, 5 komunikat, 6+ powtarzanie
+      const needMicNow = i >= 6;
       if (needMicNow && !audioActiveRef.current) {
-        // prosimy o mikrofon dopiero teraz
         startAV({ audioOnly: true }).then(() => {
           lastVoiceAtRef.current = Date.now();
         });
