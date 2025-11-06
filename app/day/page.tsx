@@ -1,3 +1,4 @@
+// app/day/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -67,7 +68,7 @@ export default function PrompterPage() {
   const [sayTranscript, setSayTranscript] = useState<string>("");
 
   const [isRunning, setIsRunning] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);           // ✅ nowy stan pauzy
+  const [isPaused, setIsPaused] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
@@ -87,6 +88,14 @@ export default function PrompterPage() {
   useEffect(() => { isRunningRef.current = isRunning; }, [isRunning]);
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { stepsRef.current = steps; }, [steps]);
+
+  // Diagnoza środowiska (jednorazowo)
+  useEffect(() => {
+    console.log("[env] ua:", navigator.userAgent);
+    console.log("[env] MediaRecorder:", typeof (window as any).MediaRecorder !== "undefined");
+    console.log("[env] mp4:", MediaRecorder.isTypeSupported?.("audio/mp4"));
+    console.log("[env] webm/opus:", MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus"));
+  }, []);
 
   // ===== TIMER SESJI =====
   const endAtRef = useRef<number | null>(null);
@@ -139,7 +148,6 @@ export default function PrompterPage() {
         setSteps(steps);
         setIdx(0);
         setDisplayText(steps[0]?.mode === "VERIFY" ? (steps[0].target || "") : (steps[0]?.prompt || ""));
-        // eslint-disable-next-line no-console
         console.log(`[DAY ${dayFileParam}] source:`, source, `steps: ${steps.length}`);
       } catch (e) {
         console.error(e);
@@ -153,7 +161,6 @@ export default function PrompterPage() {
 
   /* ---- 2) Start/Stop AV + VU + watchdog ciszy ---- */
   async function startAV(): Promise<boolean> {
-    // nie zatrzymujemy AV przy "pauzie" – tylko przy pełnym "stop"
     setMicError(null);
     speakingFramesRef.current = 0;
     lastVoiceAtRef.current = Date.now();
@@ -271,7 +278,7 @@ export default function PrompterPage() {
     clearStepTimers();
     stopSayCaptureWhisper();
     setIsRunning(false);
-    setIsPaused(true);        // zachowujemy stan (czas, krok, kamera)
+    setIsPaused(true);
     setSilencePause(false);
     pausedRemainingRef.current = remaining;
   }
@@ -290,46 +297,59 @@ export default function PrompterPage() {
   /* ===== WHISPER: start/stop ===== */
   async function startSayCaptureWhisper() {
     setSayTranscript("");
+
     const stream = streamRef.current;
-    if (!stream) return;
+    if (!stream) { console.warn("No streamRef"); return; }
 
-    const mime = MediaRecorder.isTypeSupported("audio/mp4")
-      ? "audio/mp4"
-      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus"
-          : "");
-    if (!mime) { console.warn("MediaRecorder: brak wspieranego MIME."); return; }
+    // Safari / iOS najpewniej wymaga audio/mp4; fallback na webm/opus
+    let mime = "";
+    if (MediaRecorder.isTypeSupported("audio/mp4")) mime = "audio/mp4";
+    else if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) mime = "audio/webm;codecs=opus";
 
+    if (!mime) {
+      console.error("MediaRecorder: no supported MIME");
+      alert("Twoja przeglądarka nie obsługuje nagrywania audio. Użyj aktualnego Safari/Chrome.");
+      return;
+    }
+
+    console.log("[rec] using mime =", mime);
     const mr = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64_000 });
     recRef.current = mr;
 
+    mr.onstart = () => console.log("[rec] started");
+    mr.onerror = (e) => console.error("[rec] error", e);
+    mr.onstop = () => console.log("[rec] stopped");
+
     mr.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
+      console.log("[rec] chunk", e.data.type, e.data.size);
+
       const fd = new FormData();
       const filename = mime.includes("mp4") ? "chunk.m4a" : "chunk.webm";
       fd.append("audio", e.data, filename);
+
       try {
         const resp = await fetch("/api/whisper", { method: "POST", body: fd });
+        if (!resp.ok) { console.warn("[whisper] HTTP", resp.status, await resp.text()); return; }
         const json = await resp.json();
         if (json?.text) {
-          setSayTranscript((p) => (p ? p + " " : "") + json.text);
+          setSayTranscript(prev => (prev ? prev + " " : "") + json.text);
           lastVoiceAtRef.current = Date.now();
-        } else if (json?.error) {
-          console.warn("Whisper API error:", json.error);
         }
       } catch (err) {
-        console.warn("Whisper fetch failed:", err);
+        console.warn("[whisper] fetch failed:", err);
       }
     };
 
-    try { mr.start(2000); }
+    // krótszy interwał – iOS/Safari bywa kapryśne
+    try { mr.start(1000); }
     catch {
-      try { mr.start(); } catch {}
+      try { mr.start(); } catch (e) { console.error("mr.start failed", e); }
       chunkTimerRef.current = window.setInterval(() => {
         if (recRef.current && recRef.current.state === "recording") {
           try { recRef.current.requestData(); } catch {}
         }
-      }, 2000);
+      }, 1000);
     }
   }
 
@@ -531,3 +551,4 @@ export default function PrompterPage() {
     </main>
   );
 }
+
