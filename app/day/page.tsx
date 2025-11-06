@@ -32,20 +32,23 @@ async function loadDayPlanOrTxt(dayFileParam: string): Promise<{ source: "json" 
   return { source: "txt", steps };
 }
 
-/* =============== HELPERS =============== */
+/* =============== HELPERS / DETECT =============== */
 function getParam(name: string, fallback: string) {
   if (typeof window === "undefined") return fallback;
   const v = new URLSearchParams(window.location.search).get(name);
   return (v && v.trim()) || fallback;
 }
-
-/* =============== FEATURE DETECT =============== */
 type SR = any;
 function getSpeechRecognitionCtor(): SR | null {
   if (typeof window === "undefined") return null;
   return (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition || null;
 }
-function isiOSSafari(): boolean {
+function isMobileUA(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+}
+function isIOSSafari(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
   const isIOS = /iPad|iPhone|iPod/.test(ua);
@@ -69,8 +72,8 @@ export default function PrompterPage() {
   // Timingi (uzgodnione)
   const MAX_TIME = 6 * 60;           // 6 min sesji
   const VERIFY_GREEN_AT = 4000;      // po 4s od pierwszego głosu
-  const VERIFY_NEXT_AT = 5000;       // po 5s (flash trwa 1s)
-  const SAY_LIMIT_TOTAL = 12000;     // twarde 12s od startu SAY
+  const VERIFY_NEXT_AT = 5000;       // po 5s (flash 1s)
+  const SAY_LIMIT_TOTAL = 12000;     // twarde 12s
   const SAY_GREEN_AT = 11000;        // 11s → 1s flash
   const SILENCE_TIMEOUT = 10000;     // 10s ciszy → overlay pauzy
 
@@ -84,7 +87,7 @@ export default function PrompterPage() {
   const [sayTranscript, setSayTranscript] = useState<string>("");
 
   const [isRunning, setIsRunning] = useState(false);
-  const [isPaused, setIsPaused] = useState(false); // ręczna/pauza ciszy (UI)
+  const [isPaused, setIsPaused] = useState(false);
   const [remaining, setRemaining] = useState(MAX_TIME);
   const [levelPct, setLevelPct] = useState(0);
   const [mirror] = useState(true);
@@ -146,7 +149,7 @@ export default function PrompterPage() {
   const speechRecRef = useRef<InstanceType<typeof SR> | null>(null);
   const speechActiveRef = useRef(false);
 
-  // Whisper (fallback dla Safari/iOS)
+  // Whisper fallback (mobile)
   const mrRef = useRef<MediaRecorder | null>(null);
   const mrIntervalRef = useRef<number | null>(null);
 
@@ -246,7 +249,6 @@ export default function PrompterPage() {
               speakingFramesRef.current = 0;
             }
 
-            // Pauza ciszy (10s)
             if (!silencePause) {
               const delta = now - lastVoiceAtRef.current;
               if (delta >= SILENCE_TIMEOUT) triggerSilencePause();
@@ -285,17 +287,14 @@ export default function PrompterPage() {
     const s = stepsRef.current[idxRef.current];
     if (!s) return;
     if (s.mode === "VERIFY") {
-      // 4s → flash; 5s → next (tylko jeśli był głos)
       if (verifyGreenTimerRef.current) clearTimeout(verifyGreenTimerRef.current);
       if (verifyNextTimerRef.current) clearTimeout(verifyNextTimerRef.current);
-
       verifyGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), VERIFY_GREEN_AT);
       verifyNextTimerRef.current = window.setTimeout(() => {
         setFlashGreen(false);
         gotoNext(idxRef.current);
       }, VERIFY_NEXT_AT);
     }
-    // W SAY timery lecą od startu kroku (twardy limit), nic tu nie uruchamiamy.
   }
 
   function triggerSilencePause() {
@@ -304,13 +303,12 @@ export default function PrompterPage() {
     pausedRemainingRef.current = secsLeft;
     stopCountdown();
 
-    // Zatrzymaj rozpoznawanie (oba tryby)
+    // stop rozpoznawania
     stopWebSpeech();
     stopWhisperRecorder();
 
     setSilencePause(true);
     setIsRunning(false);
-
     clearStepTimers();
   }
 
@@ -330,10 +328,12 @@ export default function PrompterPage() {
     });
   }
 
-  /* ---- 4) SAY: dwa tryby (Web Speech vs Whisper) ---- */
+  /* ---- 4) SAY: Desktop = Web Speech, Mobile = Whisper ---- */
+  const SR_CTOR = getSpeechRecognitionCtor();
+
   function startWebSpeech() {
-    if (!SR) return;
-    const rec = new SR();
+    if (!SR_CTOR) return;
+    const rec = new SR_CTOR();
     try {
       rec.lang = "pl-PL";
       rec.continuous = true;
@@ -365,7 +365,6 @@ export default function PrompterPage() {
   }
 
   function startWhisperRecorder() {
-    // Minimalny fallback: małe porcje (ok. 800 ms) → /api/whisper
     const stream = streamRef.current;
     if (!stream) return;
 
@@ -389,7 +388,7 @@ export default function PrompterPage() {
       try {
         const resp = await fetch("/api/whisper", { method: "POST", body: fd });
         const json = await resp.json();
-        if (json?.text) {
+        if (json?.text && isRunningRef.current) {
           setSayTranscript((prev) => {
             const next = (prev ? prev + " " : "") + String(json.text || "").trim();
             return next.trim();
@@ -399,13 +398,12 @@ export default function PrompterPage() {
       } catch {}
     };
 
-    try { mr.start(); } catch { try { mr.start(800); } catch {} }
-    // Wymuś porcje co ~800 ms (Safari czasem ignoruje timeslice)
+    try { mr.start(); } catch { try { mr.start(700); } catch {} }
     mrIntervalRef.current = window.setInterval(() => {
       if (mrRef.current && mrRef.current.state === "recording") {
         try { mrRef.current.requestData(); } catch {}
       }
-    }, 800);
+    }, 700);
   }
   function stopWhisperRecorder() {
     if (mrIntervalRef.current) { clearInterval(mrIntervalRef.current); mrIntervalRef.current = null; }
@@ -416,12 +414,12 @@ export default function PrompterPage() {
   function runStep(i: number) {
     clearStepTimers();
     setFlashGreen(false);
-    setSayTranscript("");       // 🧹 czyść słowa użytkownika przy każdym kroku
+    setSayTranscript(""); // 🧹 czyść słowa użytkownika przy każdym kroku
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
     lastVoiceAtRef.current = Date.now();
 
-    // Zatrzymaj rozpoznawanie (na wszelki wypadek)
+    // Zatrzymaj rozpoznawanie na wszelki wypadek
     stopWebSpeech();
     stopWhisperRecorder();
 
@@ -432,25 +430,23 @@ export default function PrompterPage() {
 
     if (s.mode === "VERIFY") {
       setDisplayText(s.target || "");
-
-      // Timery VERIFY — tylko jeśli był głos (uruchamiane w onFirstVoiceHeard)
-      // Cisza 10s obsługiwana globalnie w pętli VAD
+      // VERIFY – czekamy na głos (onFirstVoiceHeard uruchamia 4s/5s)
     } else {
       setDisplayText(s.prompt || "");
 
-      // Twardy limit SAY: 12s od startu kroku (uwzględnij prep)
       sayGreenTimerRef.current = window.setTimeout(() => setFlashGreen(true), prep + SAY_GREEN_AT);
-      sayNextTimerRef.current = window.setTimeout(() => {
+      sayNextTimerRef.current  = window.setTimeout(() => {
         setFlashGreen(false);
         gotoNext(i);
       }, prep + SAY_LIMIT_TOTAL);
 
-      // Start rozpoznawania: Web Speech jeśli jest (Chrome/Edge), inaczej Whisper fallback (iOS/Safari)
-      if (SR && !isiOSSafari()) {
-        // Web Speech
+      // Desktop: Web Speech; Mobile (iOS/Android): Whisper
+      const useMobileFallback = isMobileUA();
+      if (!useMobileFallback && SR_CTOR) {
+        // Desktop Web Speech
         prepTimerRef.current = window.setTimeout(() => startWebSpeech(), Math.max(0, prep));
       } else {
-        // Whisper fallback (iOS Safari)
+        // Mobile Whisper
         prepTimerRef.current = window.setTimeout(() => startWhisperRecorder(), Math.max(0, prep));
       }
     }
