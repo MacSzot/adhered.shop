@@ -69,13 +69,13 @@ export default function PrompterPage() {
     return Number.isNaN(n) ? dayRaw : String(n);
   })();
 
-  // Timingi (uzgodnione)
-  const MAX_TIME = 6 * 60;           // 6 min sesji
-  const VERIFY_GREEN_AT = 4000;      // po 4s od pierwszego głosu
-  const VERIFY_NEXT_AT = 5000;       // po 5s (flash 1s)
-  const SAY_LIMIT_TOTAL = 12000;     // twarde 12s
-  const SAY_GREEN_AT = 11000;        // 11s → 1s flash
-  const SILENCE_TIMEOUT = 10000;     // 10s ciszy → overlay pauzy
+  // Timingi
+  const MAX_TIME = 6 * 60;
+  const VERIFY_GREEN_AT = 4000;
+  const VERIFY_NEXT_AT = 5000;
+  const SAY_LIMIT_TOTAL = 12000;
+  const SAY_GREEN_AT = 11000;
+  const SILENCE_TIMEOUT = 10000;
 
   // Progi VAD
   const SPEAKING_FRAMES_REQUIRED = 2;
@@ -145,11 +145,11 @@ export default function PrompterPage() {
   const lastVoiceAtRef = useRef<number>(Date.now());
 
   // Web Speech
-  const SR = getSpeechRecognitionCtor();
-  const speechRecRef = useRef<InstanceType<typeof SR> | null>(null);
+  const SR_CTOR = getSpeechRecognitionCtor();
+  const speechRecRef = useRef<InstanceType<typeof SR_CTOR> | null>(null);
   const speechActiveRef = useRef(false);
 
-  // Whisper fallback (mobile)
+  // Whisper fallback (mobile + iOS)
   const mrRef = useRef<MediaRecorder | null>(null);
   const mrIntervalRef = useRef<number | null>(null);
 
@@ -211,7 +211,7 @@ export default function PrompterPage() {
 
         const analyser = ac.createAnalyser();
         analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.75; // szybciej reaguje
+        analyser.smoothingTimeConstant = 0.75;
         ac.createMediaStreamSource(streamRef.current!).connect(analyser);
         analyserRef.current = analyser;
 
@@ -303,7 +303,6 @@ export default function PrompterPage() {
     pausedRemainingRef.current = secsLeft;
     stopCountdown();
 
-    // stop rozpoznawania
     stopWebSpeech();
     stopWhisperRecorder();
 
@@ -328,12 +327,11 @@ export default function PrompterPage() {
     });
   }
 
-  /* ---- 4) SAY: Desktop = Web Speech, Mobile = Whisper ---- */
-  const SR_CTOR = getSpeechRecognitionCtor();
-
+  /* ---- 4) SAY: Desktop = Web Speech, Mobile = Whisper (iOS: mp4) ---- */
   function startWebSpeech() {
-    if (!SR_CTOR) return;
-    const rec = new SR_CTOR();
+    const SR = SR_CTOR;
+    if (!SR) return;
+    const rec = new SR();
     try {
       rec.lang = "pl-PL";
       rec.continuous = true;
@@ -350,16 +348,15 @@ export default function PrompterPage() {
         }
       };
       rec.onerror = () => {};
-      rec.onend = () => { speechActiveRef.current = false; };
-      speechRecRef.current = rec;
-      speechActiveRef.current = true;
+      rec.onend = () => {};
+      speechRecRef.current = rec as any;
       try { rec.start(); } catch {}
     } catch {}
   }
   function stopWebSpeech() {
-    if (speechActiveRef.current && speechRecRef.current) {
-      try { speechRecRef.current.stop(); } catch {}
-      speechActiveRef.current = false;
+    const rec: any = speechRecRef.current;
+    if (rec) {
+      try { rec.stop(); } catch {}
       speechRecRef.current = null;
     }
   }
@@ -368,9 +365,13 @@ export default function PrompterPage() {
     const stream = streamRef.current;
     if (!stream) return;
 
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : (MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : "");
+    // iOS Safari: prefer mp4; Android: webm zwykle OK, ale zostawimy mp4 jako 1szy wybór dla stabilności
+    const preferMp4 = isIOSSafari();
+    const mime = preferMp4 && MediaRecorder.isTypeSupported("audio/mp4")
+      ? "audio/mp4"
+      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : (MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4" : ""));
 
     if (!mime) {
       console.warn("MediaRecorder: brak MIME.");
@@ -382,28 +383,40 @@ export default function PrompterPage() {
 
     mr.ondataavailable = async (e) => {
       if (!e.data || e.data.size === 0) return;
+
       const fd = new FormData();
       const filename = mime.includes("mp4") ? "chunk.m4a" : "chunk.webm";
       fd.append("audio", e.data, filename);
+
+      // ⏱️ twardy timeout 4s, żeby nie wisieć
+      const ctrl = new AbortController();
+      const t = window.setTimeout(() => ctrl.abort(), 4000);
+
       try {
-        const resp = await fetch("/api/whisper", { method: "POST", body: fd });
+        const resp = await fetch("/api/whisper", { method: "POST", body: fd, signal: ctrl.signal });
+        window.clearTimeout(t);
+        if (!resp.ok) return;
         const json = await resp.json();
         if (json?.text && isRunningRef.current) {
           setSayTranscript((prev) => {
             const next = (prev ? prev + " " : "") + String(json.text || "").trim();
             return next.trim();
           });
+          // odśwież „słychać”, żeby nie łapało pauzy ciszy
           lastVoiceAtRef.current = Date.now();
         }
-      } catch {}
+      } catch {
+        window.clearTimeout(t);
+      }
     };
 
-    try { mr.start(); } catch { try { mr.start(700); } catch {} }
+    try { mr.start(); } catch { try { mr.start(600); } catch {} }
+    // wymuś porcje co 600 ms – Safari ignoruje timeslice
     mrIntervalRef.current = window.setInterval(() => {
       if (mrRef.current && mrRef.current.state === "recording") {
         try { mrRef.current.requestData(); } catch {}
       }
-    }, 700);
+    }, 600);
   }
   function stopWhisperRecorder() {
     if (mrIntervalRef.current) { clearInterval(mrIntervalRef.current); mrIntervalRef.current = null; }
@@ -414,12 +427,11 @@ export default function PrompterPage() {
   function runStep(i: number) {
     clearStepTimers();
     setFlashGreen(false);
-    setSayTranscript(""); // 🧹 czyść słowa użytkownika przy każdym kroku
+    setSayTranscript("");
     heardThisStepRef.current = false;
     speakingFramesRef.current = 0;
     lastVoiceAtRef.current = Date.now();
 
-    // Zatrzymaj rozpoznawanie na wszelki wypadek
     stopWebSpeech();
     stopWhisperRecorder();
 
@@ -430,7 +442,7 @@ export default function PrompterPage() {
 
     if (s.mode === "VERIFY") {
       setDisplayText(s.target || "");
-      // VERIFY – czekamy na głos (onFirstVoiceHeard uruchamia 4s/5s)
+      // zielony/next uruchamia onFirstVoiceHeard
     } else {
       setDisplayText(s.prompt || "");
 
@@ -440,13 +452,10 @@ export default function PrompterPage() {
         gotoNext(i);
       }, prep + SAY_LIMIT_TOTAL);
 
-      // Desktop: Web Speech; Mobile (iOS/Android): Whisper
-      const useMobileFallback = isMobileUA();
-      if (!useMobileFallback && SR_CTOR) {
-        // Desktop Web Speech
+      const useMobile = isMobileUA();
+      if (!useMobile && SR_CTOR) {
         prepTimerRef.current = window.setTimeout(() => startWebSpeech(), Math.max(0, prep));
       } else {
-        // Mobile Whisper
         prepTimerRef.current = window.setTimeout(() => startWhisperRecorder(), Math.max(0, prep));
       }
     }
@@ -457,7 +466,7 @@ export default function PrompterPage() {
     setFlashGreen(false);
     stopWebSpeech();
     stopWhisperRecorder();
-    setSayTranscript(""); // 🧹 znika razem z komendą
+    setSayTranscript("");
 
     const next = (i + 1) % stepsRef.current.length;
     setIdx(next);
@@ -471,6 +480,10 @@ export default function PrompterPage() {
     if (!stepsRef.current.length) return;
     const ok = await startAV();
     if (!ok) { setIsRunning(false); return; }
+
+    // 🔥 pre-warm whisper route (żeby iOS nie „wstał” dopiero na pierwszym chunku)
+    try { await fetch("/api/whisper"); } catch {}
+
     setIsRunning(true);
     setSilencePause(false);
     pausedRemainingRef.current = null;
@@ -534,7 +547,6 @@ export default function PrompterPage() {
 
   return (
     <main className="prompter-full">
-      {/* GÓRNY PANEL – bez zmian designu */}
       <header className="topbar topbar--dense topbar--tall">
         <div className="top-sides">
           <div className="top-left">
