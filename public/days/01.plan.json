@@ -6,9 +6,9 @@
   "steps": [
     { "mode": "VERIFY", "target": "To pierwszy dzień programu." },
     { "mode": "VERIFY", "target": "Nie trzeba niczego udowadniać." },
-    { "mode": "VERIFY", "target": "To moment spokojnego rozpoczęcia." },
-    { "mode": "VERIFY", "target": "Oddychaj powoli i skup się na słowach." },
-    { "mode": "VERIFY", "target": "Za chwilę zacznie się część z powtarzaniem." },
+    { "mode": "VERIFY", "target": "Za chwile poprosimy o zgodę na mikrofon." },
+    { "mode": "VERIFY", "target": "Prosimy o spokojne powtarzanie wyświetlanych treści." },
+    { "mode": "VERIFY", "target": "Pamiętaj - to jest Twoja przestrzeń." },
 
     { "mode": "VERIFY", "target": "Mam w sobie spokój." },
     { "mode": "VERIFY", "target": "Szacunek zaczyna się od uwagi." },
