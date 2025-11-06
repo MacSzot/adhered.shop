@@ -1,16 +1,16 @@
 {
   "steps": [
-    { "mode": "VERIFY", "target": "Oddycham spokojnie, zanim powiem cokolwiek." },
-    { "mode": "VERIFY", "target": "Słyszę siebie wyraźnie." },
-    { "mode": "VERIFY", "target": "Mój głos jest stabilny." },
-    { "mode": "SAY", "prompt": "Powiedz, że masz w sobie spokój." },
+    { "mode": "VERIFY", "target": "Jestem dumny, że nad sobą pracuję." },
+    { "mode": "VERIFY", "target": "Szanuję swój głos." },
+    { "mode": "VERIFY", "target": "Mój głos ma znaczenie." },
+    { "mode": "SAY", "prompt": "Powiedz, że znasz swoją wartość." },
     { "mode": "SAY", "prompt": "Powiedz, że jesteś dumny ze swojej odwagi." },
 
-    { "mode": "VERIFY", "target": "Patrzę w siebie bez napięcia." },
-    { "mode": "VERIFY", "target": "Nie gonię słów, pozwalam im płynąć." },
+    { "mode": "VERIFY", "target": "Patrzę na siebie z szacunkiem." },
+    { "mode": "VERIFY", "target": "Znam wagę własnych słów." },
     { "mode": "VERIFY", "target": "Jestem obecny w każdym zdaniu." },
     { "mode": "SAY", "prompt": "Powiedz, że szanujesz siebie za to, że się nie poddajesz." },
-    { "mode": "SAY", "prompt": "Powiedz, że Twoje starania mają znaczenie." },
+    { "mode": "SAY", "prompt": "Powiedz, że Twoje słowa mają znaczenie." },
 
     { "mode": "VERIFY", "target": "Słowa są odbiciem mojej siły." },
     { "mode": "VERIFY", "target": "Mój ton jest spokojny i pewny." },
@@ -18,16 +18,16 @@
     { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny sobie za to, że tu jesteś." },
     { "mode": "SAY", "prompt": "Powiedz, że potrafisz sobie ufać." },
 
-    { "mode": "VERIFY", "target": "Nie oceniam brzmienia, słucham znaczenia." },
-    { "mode": "VERIFY", "target": "Każde zdanie jest małym krokiem do siebie." },
-    { "mode": "VERIFY", "target": "W moim głosie słychać spokój." },
+    { "mode": "VERIFY", "target": "Znam bardzo dobrze swoją wartość." },
+    { "mode": "VERIFY", "target": "Wiem, że ile znaczę dla innych ludzi." },
+    { "mode": "VERIFY", "target": "W moim głosie słychać pewność." },
     { "mode": "SAY", "prompt": "Powiedz, że jesteś kimś, kogo warto słuchać." },
     { "mode": "SAY", "prompt": "Powiedz, że zasługujesz na zaufanie." },
 
     { "mode": "VERIFY", "target": "Nie spieszę się z żadnym słowem." },
     { "mode": "VERIFY", "target": "Znam znaczenie swojego tonu." },
     { "mode": "VERIFY", "target": "Nie chowam się w ciszy." },
-    { "mode": "SAY", "prompt": "Powiedz, że jesteś spokojny, gdy mówisz prawdę." },
+    { "mode": "SAY", "prompt": "Powiedz, że znasz swoją wartość." },
     { "mode": "SAY", "prompt": "Powiedz, że Twoja obecność ma wartość." },
 
     { "mode": "VERIFY", "target": "Jestem tu w pełni, bez udawania." },
@@ -38,7 +38,7 @@
 
     { "mode": "VERIFY", "target": "Każdy głos to dowód mojej obecności." },
     { "mode": "VERIFY", "target": "Nie unikam spojrzenia w siebie." },
-    { "mode": "VERIFY", "target": "Z każdym zdaniem staję się bliższy sobie." },
+    { "mode": "VERIFY", "target": "Z każdym zdaniem staję się silniejszy." },
     { "mode": "SAY", "prompt": "Powiedz, że lubisz słyszeć swój głos." },
     { "mode": "SAY", "prompt": "Powiedz, że jesteś wdzięczny sobie za to, że próbujesz." }
   ]
