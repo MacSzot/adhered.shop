@@ -1,4 +1,3 @@
-// app/day/page.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -11,8 +10,8 @@ type PlanStep = {
   min_sentences?: number;
   starts_with?: string[];
   starts_with_any?: string[];
-  prep_ms?: number;   // opóźnienie przed startem nagrywania
-  dwell_ms?: number;  // długość okna SAY
+  prep_ms?: number;
+  dwell_ms?: number;
   note?: string;
 };
 
@@ -50,10 +49,10 @@ export default function PrompterPage() {
   // Ustawienia
   const USER_NAME = "demo";
   const dayRaw = typeof window !== "undefined" ? getParam("day", "01") : "01";
-  const dayFileParam = dayRaw.padStart(2, "0"); // zawsze 01..11 do wczytywania plików
+  const dayFileParam = dayRaw.padStart(2, "0"); // 01..11 dla plików
   const DAY_LABEL = (() => {
     const n = parseInt(dayRaw, 10);
-    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez zera wiodącego
+    return Number.isNaN(n) ? dayRaw : String(n); // UI: bez 0 wiodącego
   })();
 
   const MAX_TIME = 6 * 60; // 6 minut
@@ -76,6 +75,9 @@ export default function PrompterPage() {
   // ⏸️ Pauza ciszy: jedyna przypominajka po 10 s + ile zostało sekund
   const [silencePause, setSilencePause] = useState(false);
   const pausedRemainingRef = useRef<number | null>(null);
+
+  // 👉 nowy stan: czy mamy już stream (żeby ukryć natywny „play”)
+  const [hasStream, setHasStream] = useState(false);
 
   // Refy aktualnych wartości
   const isRunningRef = useRef(isRunning);
@@ -166,6 +168,7 @@ export default function PrompterPage() {
         },
       });
       streamRef.current = stream;
+      setHasStream(true); // ✅ mamy stream – ukryj natywny „play”
       if (videoRef.current) (videoRef.current as any).srcObject = stream;
 
       const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
@@ -251,6 +254,7 @@ export default function PrompterPage() {
       try { audioCtxRef.current.close(); } catch {}
       audioCtxRef.current = null;
     }
+    setHasStream(false); // ✅ cofamy ukrycie natywnego „play”
   }
 
   // 👉 wznowienie po tapnięciu w overlay pauzy
@@ -259,7 +263,7 @@ export default function PrompterPage() {
     const secs = pausedRemainingRef.current ?? remaining;
     startCountdown(secs);        // wznawiamy od miejsca przerwania
     setSilencePause(false);
-    lastVoiceAtRef.current = Date.now(); // wyzeruj „ciszę”, żeby nie złapać od razu kolejnej pauzy
+    lastVoiceAtRef.current = Date.now(); // wyzeruj „ciszę”
   }
 
   /* ===== WHISPER: start/stop ===== */
@@ -346,7 +350,6 @@ export default function PrompterPage() {
     if (s.mode === "VERIFY") {
       stopSayCaptureWhisper();
       setDisplayText(s.target || "");
-      // (opcjonalne auto-next po mowie możesz tu dodać, ale nic nie zmieniamy)
     } else {
       const prep = Number(s.prep_ms ?? 200);     // szybki start
       const dwell = Number(s.dwell_ms ?? 12000); // 12s aktywnego okna SAY
@@ -446,23 +449,35 @@ export default function PrompterPage() {
       <div className="timer-top timer-top--strong" style={{ textAlign: "center" }}>{fmt(remaining)}</div>
 
       <div className={`stage ${mirror ? "mirrored" : ""}`}>
-        <video ref={videoRef} autoPlay playsInline muted className="cam" />
+        {/* ukryj natywny overlay „play”, dopóki nie ma streamu */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`cam ${!hasStream ? "video-hidden" : ""}`}
+        />
 
         {/* EKRAN STARTOWY */}
         {!isRunning && (
-          <div className="overlay center">
-            <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6, margin: "0 auto" }}>
-              <p style={{ fontSize: 15.5, opacity: 0.92 }}>
-                Twoja sesja potrwa około <b>6 minut</b>.<br />
-                Prosimy o powtarzanie na głos wyświetlanych treści.
-              </p>
-              {micError && (
-                <p style={{ marginTop: 12, color: "#ffb3b3", fontSize: 14 }}>
-                  {micError} — sprawdź dostęp do mikrofonu i kamery.
+          <>
+            <div className="overlay center">
+              <div className="intro" style={{ textAlign: "center", maxWidth: 520, lineHeight: 1.6, margin: "0 auto" }}>
+                <p style={{ fontSize: 15.5, opacity: 0.92 }}>
+                  Twoja sesja potrwa około <b>6 minut</b>.<br />
+                  Prosimy o powtarzanie na głos wyświetlanych treści.
                 </p>
-              )}
+                {micError && (
+                  <p style={{ marginTop: 12, color: "#ffb3b3", fontSize: 14 }}>
+                    {micError} — sprawdź dostęp do mikrofonu i kamery.
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
+
+            {/* nasz przycisk START nisko, czytelny na telefonie */}
+            <button className="start-floating" onClick={startSession}>START</button>
+          </>
         )}
 
         {/* SESJA */}
@@ -484,35 +499,16 @@ export default function PrompterPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
 
-            {/* ⏸️ Overlay pauzy po 10 s ciszy — JEDYNA przypominajka */}
-            {silencePause && (
-              <div
-                className="overlay"
-                onClick={resumeFromPause}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 24,
-                  textAlign: "center",
-                  background: "rgba(0,0,0,0.35)",
-                  cursor: "pointer",
-                  zIndex: 50
-                }}
-              >
-                <div style={{ maxWidth: 680, lineHeight: 1.5 }}>
-                  <div style={{ fontSize: 18, marginBottom: 14 }}>
-                    Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 600 }}>
-                    Jeśli chcesz kontynuować, dotknij ekranu.
-                  </div>
-                </div>
-              </div>
-            )}
+        {/* ⏸️ Overlay pauzy po 10 s ciszy — TERAZ niżej */}
+        {silencePause && (
+          <div className="pause-overlay" onClick={resumeFromPause}>
+            <div className="pause-card">
+              <div className="l1">Jeśli nie czujesz, że to dobry moment, zawsze możesz wrócić później.</div>
+              <div className="l2">Jeśli chcesz kontynuować, dotknij ekranu.</div>
+            </div>
           </div>
         )}
 
